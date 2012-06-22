@@ -1,1 +1,1 @@
-#define UTS_RELEASE "2.6.32.10-perf"
+#define UTS_RELEASE "2.6.32.14-KTG"

@@ -80,6 +80,7 @@ deps_config := \
 	fs/Kconfig \
 	drivers/platform/x86/Kconfig \
 	drivers/platform/Kconfig \
+	drivers/staging/zram/Kconfig \
 	drivers/staging/iio/trigger/Kconfig \
 	drivers/staging/iio/light/Kconfig \
 	drivers/staging/iio/adc/Kconfig \
@@ -553,7 +554,7 @@ deps_config := \
 include/config/auto.conf: \
 	$(deps_config)
 
-ifneq "$(KERNELVERSION)" "2.6.32.10"
+ifneq "$(KERNELVERSION)" "2.6.32.14"
 include/config/auto.conf: FORCE
 endif
 ifneq "$(ARCH)" "arm"
