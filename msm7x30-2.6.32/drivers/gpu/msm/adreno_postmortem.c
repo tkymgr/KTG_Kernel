@@ -12,6 +12,7 @@
  */
 
 #include <linux/vmalloc.h>
+#include <linux/delay.h>
 
 #include "kgsl.h"
 
@@ -21,6 +22,7 @@
 #include "adreno_postmortem.h"
 #include "adreno_debugfs.h"
 #include "kgsl_cffdump.h"
+#include "kgsl_pwrctrl.h"
 
 #include "a2xx_reg.h"
 
@@ -244,7 +246,7 @@ static void adreno_dump_regs(struct kgsl_device *device,
 	}
 }
 
-static void dump_ib(struct kgsl_device *device, char* buffId, uint32_t pt_base,
+static void dump_ib(struct kgsl_device *device, char *buffId, uint32_t pt_base,
 	uint32_t base_offset, uint32_t ib_base, uint32_t ib_size, bool dump)
 {
 	uint8_t *base_addr = adreno_convertaddr(device, pt_base,
@@ -783,6 +785,25 @@ error_vfree:
 end:
 	return result;
 }
+static void hr_usleep(int us)
+{
+	struct timespec req_time;
+	long ret;
+
+	req_time.tv_sec = us / 1000000;
+	req_time.tv_nsec = (us % 1000000) * 1000;
+
+	ret = hrtimer_nanosleep(&req_time, NULL, HRTIMER_MODE_REL,
+							CLOCK_MONOTONIC);
+	if (ret != 0)
+		printk(KERN_ERR "%s: nanosleep failed, ret = %ld\n", __func__,
+									ret);
+}
+
+static void hr_msleep(int ms)
+{
+	hr_usleep(1000 * ms);
+}
 
 /**
  * adreno_postmortem_dump - Dump the current GPU state
@@ -832,7 +853,6 @@ int adreno_postmortem_dump(struct kgsl_device *device, int manual)
 	mutex_unlock(&device->mutex);
 	flush_workqueue(device->work_queue);
 	mutex_lock(&device->mutex);
-	adreno_dump(device);
 
 	/* Turn off napping to make sure we have the clocks full
 	   attention through the following process */
@@ -845,15 +865,16 @@ int adreno_postmortem_dump(struct kgsl_device *device, int manual)
 	/* Disable the irq */
 	kgsl_pwrctrl_irq(device, KGSL_PWRFLAGS_OFF);
 
-	/* If this is not a manual trigger, then set up the
-	   state to try to recover */
-
-	if (!manual) {
-		device->state = KGSL_STATE_DUMP_AND_RECOVER;
-		KGSL_PWR_WARN(device,
-				"state -> DUMP_AND_RECOVER, device %d\n",
-				device->id);
-	}
+	adreno_dump(device);
+//	/* If this is not a manual trigger, then set up the
+//	   state to try to recover *
+//
+//	if (!manual) {
+//		device->state = KGSL_STATE_DUMP_AND_RECOVER;
+//		KGSL_PWR_WARN(device,
+//				"state -> DUMP_AND_RECOVER, device %d\n",
+//				device->id);
+//	}
 
 	/* Restore nap mode */
 	device->pwrctrl.nap_allowed = saved_nap;
@@ -867,11 +888,15 @@ int adreno_postmortem_dump(struct kgsl_device *device, int manual)
 		kgsl_pwrctrl_irq(device, KGSL_PWRFLAGS_ON);
 
 		/* try to go into a sleep mode until the next event */
-		device->requested_state = KGSL_STATE_SLEEP;
+		kgsl_pwrctrl_request_state(device, KGSL_STATE_SLEEP);
 		kgsl_pwrctrl_sleep(device);
 	}
 
 	KGSL_DRV_ERR(device, "Dump Finished\n");
+
+        hr_msleep(5000);
+        /* aleays bug on */
+        BUG_ON(true);
 
 	return 0;
 }
