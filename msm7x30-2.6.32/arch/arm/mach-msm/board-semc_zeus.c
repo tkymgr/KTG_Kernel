@@ -1132,6 +1132,12 @@ static struct usb_mass_storage_platform_data mass_storage_pdata = {
 	.cdrom_vendor	= "SEMC",
 	.cdrom_product	= "CD-ROM",
 	.cdrom_release	= 0x0100,
+
+	/* EUI-64 based identifier format */
+	.eui64_id = {
+		.ieee_company_id = {0x00, 0x0A, 0xD9},
+		.vendor_specific_ext_field = {0x00, 0x00, 0x00, 0x00, 0x00},
+	},
 };
 
 static struct platform_device mass_storage_device = {
