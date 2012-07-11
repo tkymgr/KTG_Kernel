@@ -16,7 +16,6 @@
 
 #include <linux/idr.h>
 #include <linux/wakelock.h>
-#include <linux/pm_qos_params.h>
 #include <linux/earlysuspend.h>
 
 #include "kgsl.h"
@@ -126,7 +125,6 @@ struct kgsl_event {
 	void (*func)(struct kgsl_device *, void *, u32);
 	void *priv;
 	struct list_head list;
-	struct kgsl_device_private *owner;
 };
 
 

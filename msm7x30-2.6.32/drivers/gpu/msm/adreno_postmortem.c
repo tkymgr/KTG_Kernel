@@ -849,7 +849,6 @@ int adreno_postmortem_dump(struct kgsl_device *device, int manual)
 
 	/* Disable the idle timer so we don't get interrupted */
 	del_timer_sync(&device->idle_timer);
-
 	mutex_unlock(&device->mutex);
 	flush_workqueue(device->work_queue);
 	mutex_lock(&device->mutex);
@@ -866,15 +865,6 @@ int adreno_postmortem_dump(struct kgsl_device *device, int manual)
 	kgsl_pwrctrl_irq(device, KGSL_PWRFLAGS_OFF);
 
 	adreno_dump(device);
-//	/* If this is not a manual trigger, then set up the
-//	   state to try to recover *
-//
-//	if (!manual) {
-//		device->state = KGSL_STATE_DUMP_AND_RECOVER;
-//		KGSL_PWR_WARN(device,
-//				"state -> DUMP_AND_RECOVER, device %d\n",
-//				device->id);
-//	}
 
 	/* Restore nap mode */
 	device->pwrctrl.nap_allowed = saved_nap;

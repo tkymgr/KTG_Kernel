@@ -6,7 +6,8 @@ msm_kgsl_core-y = \
 	kgsl_pwrctrl.o \
 	kgsl_pwrscale.o \
 	kgsl_mmu.o \
-	kgsl_gpummu.o
+	kgsl_gpummu.o \
+	kgsl_iommu.o
 
 msm_kgsl_core-$(CONFIG_DEBUG_FS) += kgsl_debugfs.o
 msm_kgsl_core-$(CONFIG_MSM_KGSL_CFF_DUMP) += kgsl_cffdump.o

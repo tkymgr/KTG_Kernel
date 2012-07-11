@@ -136,21 +136,31 @@ static const struct {
 	const char *pm4fw;
 	const char *pfpfw;
 	struct adreno_gpudev *gpudev;
+	unsigned int istore_size;
+	unsigned int pix_shader_start;
 } adreno_gpulist[] = {
 	{ ADRENO_REV_A200, 0, 2, ANY_ID, ANY_ID,
-		"yamato_pm4.fw", "yamato_pfp.fw", &adreno_a2xx_gpudev },
+		"yamato_pm4.fw", "yamato_pfp.fw", &adreno_a2xx_gpudev,
+		512, 384},
 	{ ADRENO_REV_A205, 0, 1, 0, ANY_ID,
-		"yamato_pm4.fw", "yamato_pfp.fw", &adreno_a2xx_gpudev },
+		"yamato_pm4.fw", "yamato_pfp.fw", &adreno_a2xx_gpudev,
+		512, 384},
 	{ ADRENO_REV_A220, 2, 1, ANY_ID, ANY_ID,
-		"leia_pm4_470.fw", "leia_pfp_470.fw", &adreno_a2xx_gpudev },
+		"leia_pm4_470.fw", "leia_pfp_470.fw", &adreno_a2xx_gpudev,
+		512, 384},
 	/*
 	 * patchlevel 5 (8960v2) needs special pm4 firmware to work around
 	 * a hardware problem.
 	 */
 	{ ADRENO_REV_A225, 2, 2, 0, 5,
-		"a225p5_pm4.fw", "a225_pfp.fw", &adreno_a2xx_gpudev },
+		"a225p5_pm4.fw", "a225_pfp.fw", &adreno_a2xx_gpudev,
+		1536, 768 },
+	{ ADRENO_REV_A225, 2, 2, 0, 6,
+		"a225_pm4.fw", "a225_pfp.fw", &adreno_a2xx_gpudev,
+		1536, 768 },
 	{ ADRENO_REV_A225, 2, 2, ANY_ID, ANY_ID,
-		"a225_pm4.fw", "a225_pfp.fw", &adreno_a2xx_gpudev },
+		"a225_pm4.fw", "a225_pfp.fw", &adreno_a2xx_gpudev,
+		1536, 768 },
 };
 
 static void adreno_gmeminit(struct adreno_device *adreno_dev)
@@ -423,6 +433,8 @@ adreno_identify_gpu(struct adreno_device *adreno_dev)
 	adreno_dev->gpudev = adreno_gpulist[i].gpudev;
 	adreno_dev->pfp_fwfile = adreno_gpulist[i].pfpfw;
 	adreno_dev->pm4_fwfile = adreno_gpulist[i].pm4fw;
+	adreno_dev->istore_size = adreno_gpulist[i].istore_size;
+	adreno_dev->pix_shader_start = adreno_gpulist[i].pix_shader_start;
 }
 
 static int __devinit
@@ -958,6 +970,15 @@ const struct kgsl_memdesc *adreno_find_region(struct kgsl_device *device,
 		spin_unlock(&priv->mem_lock);
 	}
 	mutex_unlock(&kgsl_driver.process_mutex);
+
+	BUG_ON(!mutex_is_locked(&device->mutex));
+	list_for_each_entry(entry, &device->memqueue, list) {
+		if (kgsl_gpuaddr_in_memdesc(&entry->memdesc, gpuaddr, size)) {
+			result = &entry->memdesc;
+			return result;
+		}
+
+	}
 
 	while (1) {
 		struct adreno_context *adreno_context = NULL;

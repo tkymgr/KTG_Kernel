@@ -1,5 +1,4 @@
 /* Copyright (c) 2011, Code Aurora Forum. All rights reserved.
- * Copyright (C) 2011 Sony Ericsson Mobile Communications AB.
  *
  * This program is free software; you can redistribute it and/or modify
  * it under the terms of the GNU General Public License version 2 and
@@ -22,8 +21,6 @@
 #include "kgsl_mmu.h"
 #include "kgsl_device.h"
 #include "kgsl_sharedmem.h"
-
-#include "adreno_ringbuffer.h"
 
 static ssize_t
 sysfs_show_ptpool_entries(struct kobject *kobj,
@@ -385,7 +382,6 @@ static inline void
 kgsl_pt_map_set(struct kgsl_gpummu_pt *pt, uint32_t pte, uint32_t val)
 {
 	uint32_t *baseptr = (uint32_t *)pt->base.hostptr;
-	BUG_ON(pte*sizeof(uint32_t) >= pt->base.size);
 	baseptr[pte] = val;
 }
 
@@ -393,7 +389,6 @@ static inline uint32_t
 kgsl_pt_map_get(struct kgsl_gpummu_pt *pt, uint32_t pte)
 {
 	uint32_t *baseptr = (uint32_t *)pt->base.hostptr;
-	BUG_ON(pte*sizeof(uint32_t) >= pt->base.size);
 	return baseptr[pte] & GSL_PT_PAGE_ADDR_MASK;
 }
 

@@ -45,20 +45,20 @@ module_param_named(mmutype, ksgl_mmu_type, charp, 0);
 MODULE_PARM_DESC(ksgl_mmu_type,
 "Type of MMU to be used for graphics. Valid values are 'iommu' or 'gpummu' or 'nommu'");
 
+#ifdef CONFIG_GENLOCK
+
 /**
  * kgsl_add_event - Add a new timstamp event for the KGSL device
  * @device - KGSL device for the new event
  * @ts - the timestamp to trigger the event on
  * @cb - callback function to call when the timestamp expires
  * @priv - private data for the specific event type
- * @owner - driver instance that owns this event
  *
  * @returns - 0 on success or error code on failure
  */
 
 static int kgsl_add_event(struct kgsl_device *device, u32 ts,
-	void (*cb)(struct kgsl_device *, void *, u32), void *priv,
-	struct kgsl_device_private *owner)
+	void (*cb)(struct kgsl_device *, void *, u32), void *priv)
 {
 	struct kgsl_event *event, *event_tmp;
 	struct list_head *n;
@@ -95,7 +95,6 @@ static int kgsl_add_event(struct kgsl_device *device, u32 ts,
 	event->timestamp = ts;
 	event->priv = priv;
 	event->func = cb;
-	event->owner = owner;
 
 	/* Add the event in order to the list */
 
@@ -114,6 +113,7 @@ static int kgsl_add_event(struct kgsl_device *device, u32 ts,
 
 	return 0;
 }
+#endif
 
 static inline struct kgsl_mem_entry *
 kgsl_mem_entry_create(void)
@@ -1304,7 +1304,8 @@ static int memdesc_sg_virt(struct kgsl_memdesc *memdesc,
 	int sglen = PAGE_ALIGN(size) / PAGE_SIZE;
 	unsigned long paddr = (unsigned long) addr;
 
-	memdesc->sg = vmalloc(sglen * sizeof(struct scatterlist));
+	memdesc->sg = kmalloc(sglen * sizeof(struct scatterlist),
+		GFP_KERNEL);
 	if (memdesc->sg == NULL)
 		return -ENOMEM;
 
@@ -1344,7 +1345,7 @@ static int memdesc_sg_virt(struct kgsl_memdesc *memdesc,
 
 err:
 	spin_unlock(&current->mm->page_table_lock);
-	vfree(memdesc->sg);
+	kfree(memdesc->sg);
 	memdesc->sg = NULL;
 
 	return -EINVAL;
@@ -1699,7 +1700,6 @@ static void kgsl_genlock_event_cb(struct kgsl_device *device,
  * @timestamp - Timestamp to trigger the event
  * @data - User space buffer containing struct kgsl_genlock_event_priv
  * @len - length of the userspace buffer
- * @owner - driver instance that owns this event
  * @returns 0 on success or error code on error
  *
  * Attack to a genlock handle and register an event to release the
@@ -1707,8 +1707,7 @@ static void kgsl_genlock_event_cb(struct kgsl_device *device,
  */
 
 static int kgsl_add_genlock_event(struct kgsl_device *device,
-	u32 timestamp, void __user *data, int len,
-	struct kgsl_device_private *owner)
+	u32 timestamp, void __user *data, int len)
 {
 	struct kgsl_genlock_event_priv *event;
 	struct kgsl_timestamp_event_genlock priv;
@@ -1733,8 +1732,7 @@ static int kgsl_add_genlock_event(struct kgsl_device *device,
 		return ret;
 	}
 
-	ret = kgsl_add_event(device, timestamp, kgsl_genlock_event_cb, event,
-			     owner);
+	ret = kgsl_add_event(device, timestamp, kgsl_genlock_event_cb, event);
 	if (ret)
 		kfree(event);
 
@@ -1742,8 +1740,7 @@ static int kgsl_add_genlock_event(struct kgsl_device *device,
 }
 #else
 static long kgsl_add_genlock_event(struct kgsl_device *device,
-	u32 timestamp, void __user *data, int len,
-	struct kgsl_device_private *owner)
+	u32 timestamp, void __user *data, int len)
 {
 	return -EINVAL;
 }
@@ -1766,8 +1763,7 @@ static long kgsl_ioctl_timestamp_event(struct kgsl_device_private *dev_priv,
 	switch (param->type) {
 	case KGSL_TIMESTAMP_EVENT_GENLOCK:
 		ret = kgsl_add_genlock_event(dev_priv->device,
-			param->timestamp, param->priv, param->len,
-			dev_priv);
+			param->timestamp, param->priv, param->len);
 		break;
 	default:
 		ret = -EINVAL;
@@ -2042,8 +2038,8 @@ void kgsl_unregister_device(struct kgsl_device *device)
 	kgsl_cffdump_close(device->id);
 	kgsl_pwrctrl_uninit_sysfs(device);
 
-	wake_lock_destroy(&device->idle_wakelock);
-	pm_qos_remove_requirement(PM_QOS_CPU_DMA_LATENCY, "kgsl");
+	//wake_lock_destroy(&device->idle_wakelock);
+	//pm_qos_remove_requirement(PM_QOS_CPU_DMA_LATENCY, "kgsl");
 
 	idr_destroy(&device->context_idr);
 
@@ -2135,9 +2131,9 @@ kgsl_register_device(struct kgsl_device *device)
 	if (ret != 0)
 		goto err_close_mmu;
 
-	wake_lock_init(&device->idle_wakelock, WAKE_LOCK_IDLE, device->name);
-	pm_qos_add_requirement(PM_QOS_CPU_DMA_LATENCY, "kgsl",
-				PM_QOS_DEFAULT_VALUE);
+	//wake_lock_init(&device->idle_wakelock, WAKE_LOCK_IDLE, device->name);
+	//pm_qos_add_requirement(PM_QOS_CPU_DMA_LATENCY, "kgsl",
+	//			PM_QOS_DEFAULT_VALUE);
 
 	idr_init(&device->context_idr);
 
