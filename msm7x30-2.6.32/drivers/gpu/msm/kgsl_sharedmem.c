@@ -13,6 +13,8 @@
 #include <linux/vmalloc.h>
 #include <linux/memory_alloc.h>
 #include <asm/cacheflush.h>
+#include <linux/slab.h>
+#include <linux/kmemleak.h>
 
 #include "kgsl.h"
 #include "kgsl_sharedmem.h"
@@ -201,6 +203,10 @@ static int kgsl_drv_memstat_show(struct device *dev,
 		val = kgsl_driver.stats.vmalloc;
 	else if (!strncmp(attr->attr.name, "vmalloc_max", 11))
 		val = kgsl_driver.stats.vmalloc_max;
+	else if (!strncmp(attr->attr.name, "page_alloc", 10))
+		val = kgsl_driver.stats.page_alloc;
+	else if (!strncmp(attr->attr.name, "page_alloc_max", 14))
+		val = kgsl_driver.stats.page_alloc_max;
 	else if (!strncmp(attr->attr.name, "coherent", 8))
 		val = kgsl_driver.stats.coherent;
 	else if (!strncmp(attr->attr.name, "coherent_max", 12))
@@ -230,6 +236,8 @@ static int kgsl_drv_histogram_show(struct device *dev,
 
 DEVICE_ATTR(vmalloc, 0444, kgsl_drv_memstat_show, NULL);
 DEVICE_ATTR(vmalloc_max, 0444, kgsl_drv_memstat_show, NULL);
+DEVICE_ATTR(page_alloc, 0444, kgsl_drv_memstat_show, NULL);
+DEVICE_ATTR(page_alloc_max, 0444, kgsl_drv_memstat_show, NULL);
 DEVICE_ATTR(coherent, 0444, kgsl_drv_memstat_show, NULL);
 DEVICE_ATTR(coherent_max, 0444, kgsl_drv_memstat_show, NULL);
 DEVICE_ATTR(mapped, 0444, kgsl_drv_memstat_show, NULL);
@@ -239,6 +247,8 @@ DEVICE_ATTR(histogram, 0444, kgsl_drv_histogram_show, NULL);
 static struct device_attribute *drv_attr_list[] = {
 	&dev_attr_vmalloc,
 	&dev_attr_vmalloc_max,
+	&dev_attr_page_alloc,
+	&dev_attr_page_alloc_max,
 	&dev_attr_coherent,
 	&dev_attr_coherent_max,
 	&dev_attr_mapped,

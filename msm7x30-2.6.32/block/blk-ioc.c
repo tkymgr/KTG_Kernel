@@ -41,7 +41,6 @@ int put_io_context(struct io_context *ioc)
 		rcu_read_lock();
 		if (ioc->aic && ioc->aic->dtor)
 			ioc->aic->dtor(ioc->aic);
-
 		hlist_sched_dtor(ioc, &ioc->cic_list);
 		hlist_sched_dtor(ioc, &ioc->bfq_cic_list);
 		rcu_read_unlock();
@@ -79,10 +78,8 @@ void exit_io_context(void)
 	if (atomic_dec_and_test(&ioc->nr_tasks)) {
 		if (ioc->aic && ioc->aic->exit)
 			ioc->aic->exit(ioc->aic);
-
 		hlist_sched_exit(ioc, &ioc->cic_list);
 		hlist_sched_exit(ioc, &ioc->bfq_cic_list);
-
 		put_io_context(ioc);
 	}
 }
