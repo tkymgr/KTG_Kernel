@@ -424,6 +424,7 @@ static void ehci_shutdown(struct usb_hcd *hcd)
 	spin_unlock_irq(&ehci->lock);
 }
 
+#if 0
 static void ehci_port_power (struct ehci_hcd *ehci, int is_on)
 {
 	unsigned port;
@@ -441,6 +442,7 @@ static void ehci_port_power (struct ehci_hcd *ehci, int is_on)
 	ehci_readl(ehci, &ehci->regs->command);
 	msleep(20);
 }
+#endif
 
 /*-------------------------------------------------------------------------*/
 
@@ -622,6 +624,7 @@ static int ehci_init(struct usb_hcd *hcd)
 	return 0;
 }
 
+#if 0
 /* start HC running; it's halted, ehci_init() has been run (once) */
 static int ehci_run (struct usb_hcd *hcd)
 {
@@ -712,6 +715,7 @@ static int ehci_run (struct usb_hcd *hcd)
 
 	return 0;
 }
+#endif
 
 /*-------------------------------------------------------------------------*/
 
@@ -1056,6 +1060,7 @@ done:
 	return;
 }
 
+#if 0
 static void
 ehci_endpoint_reset(struct usb_hcd *hcd, struct usb_host_endpoint *ep)
 {
@@ -1096,6 +1101,7 @@ ehci_endpoint_reset(struct usb_hcd *hcd, struct usb_host_endpoint *ep)
 	}
 	spin_unlock_irqrestore(&ehci->lock, flags);
 }
+#endif
 
 static int ehci_get_frame (struct usb_hcd *hcd)
 {
