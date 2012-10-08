@@ -308,7 +308,6 @@ static void ll_device_want_to_sleep(struct hci_uart *hu)
 	unsigned long flags;
 	struct ll_struct *ll = hu->priv;
 
-
 	BT_DBG("hu %p", hu);
 
 	/* lock hcill state */
@@ -451,7 +450,6 @@ static int ll_recv(struct hci_uart *hu, void *data, int count)
 	BT_DBG("hu %p count %d rx_state %ld rx_count %ld", hu, count, ll->rx_state, ll->rx_count);
 
 	ptr = data;
-
 	while (count) {
 		if (ll->rx_count) {
 			len = min_t(unsigned int, ll->rx_count, count);

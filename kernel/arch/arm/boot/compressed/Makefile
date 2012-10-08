@@ -89,14 +89,8 @@ endif
 ifneq ($(PARAMS_PHYS),)
 LDFLAGS_vmlinux += --defsym params_phys=$(PARAMS_PHYS)
 endif
-# ?
-LDFLAGS_vmlinux += -p
-# Report unresolved symbol references
-LDFLAGS_vmlinux += --no-undefined
-# Delete all temporary local symbols
-LDFLAGS_vmlinux += -X
-# Next argument is a linker script
-LDFLAGS_vmlinux += -T
+LDFLAGS_vmlinux += -p --no-undefined -X \
+	$(shell $(CC) $(KBUILD_CFLAGS) --print-libgcc-file-name) -T
 
 # Don't allow any static data in misc.o, which
 # would otherwise mess up our GOT table
