@@ -40,8 +40,10 @@
 #include <linux/hdreg.h>
 #include <linux/cdrom.h>
 #include <linux/module.h>
+#include <linux/slab.h>
 #include <linux/scatterlist.h>
 
+#include <xen/xen.h>
 #include <xen/xenbus.h>
 #include <xen/grant_table.h>
 #include <xen/events.h>
@@ -67,7 +69,7 @@ struct blk_shadow {
 
 static const struct block_device_operations xlvbd_block_fops;
 
-#define BLK_RING_SIZE __RING_SIZE((struct blkif_sring *)0, PAGE_SIZE)
+#define BLK_RING_SIZE __CONST_RING_SIZE(blkif, PAGE_SIZE)
 
 /*
  * We have one of these per vbd, whether ide, scsi or 'other'.  They
@@ -345,15 +347,14 @@ static int xlvbd_init_blk_queue(struct gendisk *gd, u16 sector_size)
 
 	/* Hard sector size and max sectors impersonate the equiv. hardware. */
 	blk_queue_logical_block_size(rq, sector_size);
-	blk_queue_max_sectors(rq, 512);
+	blk_queue_max_hw_sectors(rq, 512);
 
 	/* Each segment in a request is up to an aligned page in size. */
 	blk_queue_segment_boundary(rq, PAGE_SIZE - 1);
 	blk_queue_max_segment_size(rq, PAGE_SIZE);
 
 	/* Ensure a merged request will fit in a single I/O ring slot. */
-	blk_queue_max_phys_segments(rq, BLKIF_MAX_SEGMENTS_PER_REQUEST);
-	blk_queue_max_hw_segments(rq, BLKIF_MAX_SEGMENTS_PER_REQUEST);
+	blk_queue_max_segments(rq, BLKIF_MAX_SEGMENTS_PER_REQUEST);
 
 	/* Make sure buffer addresses are sector-aligned. */
 	blk_queue_dma_alignment(rq, 511);
@@ -889,7 +890,7 @@ static void blkfront_connect(struct blkfront_info *info)
 	}
 
 	err = xenbus_gather(XBT_NIL, info->xbdev->otherend,
-			    "feature-barrier", "%d", &info->feature_barrier,
+			    "feature-barrier", "%lu", &info->feature_barrier,
 			    NULL);
 	if (err)
 		info->feature_barrier = 0;
@@ -942,10 +943,10 @@ static void blkfront_closing(struct xenbus_device *dev)
 	/* Flush gnttab callback work. Must be done with no locks held. */
 	flush_scheduled_work();
 
-	del_gendisk(info->gd);
-
 	blk_cleanup_queue(info->rq);
 	info->rq = NULL;
+
+	del_gendisk(info->gd);
 
  out:
 	xenbus_frontend_closed(dev);
@@ -1049,7 +1050,7 @@ static const struct block_device_operations xlvbd_block_fops =
 };
 
 
-static struct xenbus_device_id blkfront_ids[] = {
+static const struct xenbus_device_id blkfront_ids[] = {
 	{ "vbd" },
 	{ "" }
 };

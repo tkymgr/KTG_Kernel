@@ -885,8 +885,7 @@ restart_loop:
 		spin_unlock(&journal->j_list_lock);
 		bh = jh2bh(jh);
 		jbd_lock_bh_state(bh);
-		J_ASSERT_JH(jh,	jh->b_transaction == commit_transaction ||
-			jh->b_transaction == journal->j_running_transaction);
+		J_ASSERT_JH(jh,	jh->b_transaction == commit_transaction);
 
 		/*
 		 * If there is undo-protected committed data against
@@ -937,7 +936,7 @@ restart_loop:
 		 * gain, it also stops aliasing problems if the buffer is
 		 * left behind for writeback and gets reallocated for another
 		 * use in a different page. */
-		if (buffer_freed(bh)) {
+		if (buffer_freed(bh) && !jh->b_next_transaction) {
 			clear_buffer_freed(bh);
 			clear_buffer_jbddirty(bh);
 		}
