@@ -175,6 +175,8 @@ struct kgsl_device {
 	struct kobject pwrscale_kobj;
 	struct work_struct ts_expired_ws;
 	struct list_head events;
+	struct pm_qos_request_list *dma_pm_qos_req; 
+	struct pm_qos_request_list *bus_pm_qos_req; 
 };
 
 struct kgsl_context {

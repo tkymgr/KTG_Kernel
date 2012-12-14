@@ -59,6 +59,7 @@ static struct clk *tv_dac_clk;
 static struct clk *hdmi_clk;
 static struct clk *mdp_tv_clk;
 static unsigned long tv_src_clk_default_rate;
+static struct pm_qos_request_list *pm_qos_req;
 
 static int mdp4_dtv_runtime_suspend(struct device *dev)
 {
@@ -110,8 +111,7 @@ static int dtv_off(struct platform_device *pdev)
 		ret = dtv_pdata->lcdc_gpio_config(0);
 
 	r = clk_set_rate(tv_src_clk, tv_src_clk_default_rate);
-	pm_qos_update_requirement(PM_QOS_SYSTEM_BUS_FREQ , "dtv",
-					PM_QOS_DEFAULT_VALUE);
+	pm_qos_update_request(pm_qos_req, PM_QOS_DEFAULT_VALUE);
 	pr_info("%s: tv_src_clk=%ldkHz, pm_qos_rate=%dkHz, [%d]\n", __func__,
 		tv_src_clk_default_rate/1000, PM_QOS_DEFAULT_VALUE, r);
 
@@ -134,8 +134,7 @@ static int dtv_on(struct platform_device *pdev)
 	pm_qos_rate = MSM_AXI_QOS_DTV_ON;
 #endif
 
-	pm_qos_update_requirement(PM_QOS_SYSTEM_BUS_FREQ , "dtv",
-						pm_qos_rate);
+	pm_qos_update_request(pm_qos_req, pm_qos_rate);
 	mdp_set_core_clk(1);
 	mdp4_extn_disp = 1;
 	mfd = platform_get_drvdata(pdev);
@@ -258,7 +257,7 @@ dtv_probe_err:
 
 static int dtv_remove(struct platform_device *pdev)
 {
-	pm_qos_remove_requirement(PM_QOS_SYSTEM_BUS_FREQ , "dtv");
+	pm_qos_remove_request(pm_qos_req);
 
 	pm_runtime_disable(&pdev->dev);
 	return 0;
@@ -301,8 +300,8 @@ static int __init dtv_driver_init(void)
 	if (IS_ERR(mdp_tv_clk))
 		mdp_tv_clk = NULL;
 
-	pm_qos_add_requirement(PM_QOS_SYSTEM_BUS_FREQ , "dtv",
-				PM_QOS_DEFAULT_VALUE);
+	pm_qos_req = pm_qos_add_request(PM_QOS_SYSTEM_BUS_FREQ,
+			PM_QOS_DEFAULT_VALUE);
 
 	return dtv_register_driver();
 }

@@ -31,7 +31,6 @@
 #include <linux/timer.h>
 #include <linux/remote_spinlock.h>
 #include <linux/pm_qos_params.h>
-#include <linux/wakelock.h>
 #include <mach/gpio.h>
 
 
@@ -88,11 +87,12 @@ struct msm_i2c_dev {
 	remote_mutex_t               r_lock;
 	int                          suspended;
 	struct mutex                 mlock;
-	struct wake_lock             wakelock;
 	struct msm_i2c_platform_data *pdata;
 	struct timer_list            pwr_timer;
 	int                          clk_state;
 	void                         *complete;
+
+	struct pm_qos_request_list *pm_qos_req;
 };
 
 static void
@@ -379,11 +379,9 @@ msm_i2c_xfer(struct i2c_adapter *adap, struct i2c_msg msgs[], int num)
 	int check_busy = 1;
 
 	del_timer_sync(&dev->pwr_timer);
-	wake_lock(&dev->wakelock);
 	mutex_lock(&dev->mlock);
 	if (dev->suspended) {
 		mutex_unlock(&dev->mlock);
-		wake_unlock(&dev->wakelock);
 		return -EIO;
 	}
 
@@ -393,8 +391,7 @@ msm_i2c_xfer(struct i2c_adapter *adap, struct i2c_msg msgs[], int num)
 	}
 
 	/* Don't allow power collapse until we release remote spinlock */
-	pm_qos_update_requirement(PM_QOS_CPU_DMA_LATENCY, "msm_i2c",
-					dev->pdata->pm_lat);
+	pm_qos_update_request(dev->pm_qos_req,  dev->pdata->pm_lat);
 	if (dev->pdata->rmutex) {
 		remote_mutex_lock(&dev->r_lock);
 		/* If other processor did some transactions, we may have
@@ -547,11 +544,10 @@ wait_for_int:
 	disable_irq(dev->irq);
 	if (dev->pdata->rmutex)
 		remote_mutex_unlock(&dev->r_lock);
-	pm_qos_update_requirement(PM_QOS_CPU_DMA_LATENCY, "msm_i2c",
-					PM_QOS_DEFAULT_VALUE);
+	pm_qos_update_request(dev->pm_qos_req,
+			      PM_QOS_DEFAULT_VALUE);
 	mod_timer(&dev->pwr_timer, (jiffies + 3*HZ));
 	mutex_unlock(&dev->mlock);
-	wake_unlock(&dev->wakelock);
 	return ret;
 }
 
@@ -644,8 +640,6 @@ msm_i2c_probe(struct platform_device *pdev)
 	spin_lock_init(&dev->lock);
 	platform_set_drvdata(pdev, dev);
 
-	wake_lock_init(&dev->wakelock, WAKE_LOCK_SUSPEND, "msm-i2c");
-
 	clk_enable(clk);
 
 	if (pdata->rmutex) {
@@ -698,8 +692,13 @@ msm_i2c_probe(struct platform_device *pdev)
 		dev_err(&pdev->dev, "request_irq failed\n");
 		goto err_request_irq_failed;
 	}
-	pm_qos_add_requirement(PM_QOS_CPU_DMA_LATENCY, "msm_i2c",
-					PM_QOS_DEFAULT_VALUE);
+	dev->pm_qos_req = pm_qos_add_request(PM_QOS_CPU_DMA_LATENCY,
+					     PM_QOS_DEFAULT_VALUE);
+	if (!dev->pm_qos_req) {
+		dev_err(&pdev->dev, "pm_qos_add_request failed\n");
+		goto err_pm_qos_add_request_failed;
+	}
+
 	disable_irq(dev->irq);
 	dev->suspended = 0;
 	mutex_init(&dev->mlock);
@@ -712,7 +711,8 @@ msm_i2c_probe(struct platform_device *pdev)
 
 	return 0;
 
-/*	free_irq(dev->irq, dev); */
+err_pm_qos_add_request_failed:
+	free_irq(dev->irq, dev); 
 err_request_irq_failed:
 	i2c_del_adapter(&dev->adap_pri);
 	i2c_del_adapter(&dev->adap_aux);
@@ -739,12 +739,11 @@ msm_i2c_remove(struct platform_device *pdev)
 	dev->suspended = 1;
 	mutex_unlock(&dev->mlock);
 	mutex_destroy(&dev->mlock);
-	wake_lock_destroy(&dev->wakelock);
 	del_timer_sync(&dev->pwr_timer);
 	if (dev->clk_state != 0)
 		msm_i2c_pwr_mgmt(dev, 0);
 	platform_set_drvdata(pdev, NULL);
-	pm_qos_remove_requirement(PM_QOS_CPU_DMA_LATENCY, "msm_i2c");
+	pm_qos_remove_request(dev->pm_qos_req);
 	free_irq(dev->irq, dev);
 	i2c_del_adapter(&dev->adap_pri);
 	i2c_del_adapter(&dev->adap_aux);
@@ -752,7 +751,8 @@ msm_i2c_remove(struct platform_device *pdev)
 	iounmap(dev->base);
 	kfree(dev);
 	mem = platform_get_resource(pdev, IORESOURCE_MEM, 0);
-	release_mem_region(mem->start, (mem->end - mem->start) + 1);
+	if (mem)
+		release_mem_region(mem->start, (mem->end - mem->start) + 1);
 	return 0;
 }
 

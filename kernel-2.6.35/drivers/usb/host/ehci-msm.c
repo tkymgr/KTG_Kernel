@@ -57,6 +57,7 @@ struct msmusb_hcd {
 	struct work_struct otg_work;
 	unsigned flags;
 	struct msm_otg_ops otg_ops;
+	struct pm_qos_request_list *pm_qos_req;
 };
 
 static inline struct msmusb_hcd *hcd_to_mhcd(struct usb_hcd *hcd)
@@ -71,8 +72,6 @@ static inline struct usb_hcd *mhcd_to_hcd(struct msmusb_hcd *mhcd)
 
 static void msm_xusb_pm_qos_update(struct msmusb_hcd *mhcd, int vote)
 {
-	struct usb_hcd *hcd = mhcd_to_hcd(mhcd);
-
 	if (PHY_TYPE(mhcd->pdata->phy_info) == USB_PHY_SERIAL_PMIC)
 		goto vote_for_axi;
 
@@ -81,12 +80,10 @@ static void msm_xusb_pm_qos_update(struct msmusb_hcd *mhcd, int vote)
 
 vote_for_axi:
 	if (vote) {
-		pm_qos_update_requirement(PM_QOS_SYSTEM_BUS_FREQ,
-				(char *)hcd->self.bus_name,
+		pm_qos_update_request(mhcd->pm_qos_req,
 				 MSM_AXI_MAX_FREQ);
 	} else {
-		pm_qos_update_requirement(PM_QOS_SYSTEM_BUS_FREQ,
-				(char *) hcd->self.bus_name,
+		pm_qos_update_request(mhcd->pm_qos_req,
 				PM_QOS_DEFAULT_VALUE);
 	}
 }
@@ -724,16 +721,14 @@ static int __devinit ehci_msm_probe(struct platform_device *pdev)
 	INIT_WORK(&mhcd->lpm_exit_work, usb_lpm_exit_w);
 
 	wake_lock_init(&mhcd->wlock, WAKE_LOCK_SUSPEND, dev_name(&pdev->dev));
-	pm_qos_add_requirement(PM_QOS_SYSTEM_BUS_FREQ, (char *)dev_name(&pdev->dev),
-					PM_QOS_DEFAULT_VALUE);
+	mhcd->pm_qos_req = pm_qos_add_request(PM_QOS_SYSTEM_BUS_FREQ, PM_QOS_DEFAULT_VALUE);
 
 	retval = msm_xusb_init_host(mhcd);
 
 	if (retval < 0) {
 		usb_put_hcd(hcd);
 		wake_lock_destroy(&mhcd->wlock);
-		pm_qos_remove_requirement(PM_QOS_SYSTEM_BUS_FREQ,
-				(char *) dev_name(&pdev->dev));
+		pm_qos_remove_request(mhcd->pm_qos_req);
 	}
 
 	pm_runtime_enable(&pdev->dev);
@@ -779,7 +774,7 @@ static int __exit ehci_msm_remove(struct platform_device *pdev)
 	retval = msm_xusb_rpc_close(mhcd);
 
 	wake_lock_destroy(&mhcd->wlock);
-	pm_qos_remove_requirement(PM_QOS_SYSTEM_BUS_FREQ, (char *) dev_name(&pdev->dev));
+	pm_qos_remove_request(mhcd->pm_qos_req);
 
 	pm_runtime_disable(&pdev->dev);
 	pm_runtime_set_suspended(&pdev->dev);

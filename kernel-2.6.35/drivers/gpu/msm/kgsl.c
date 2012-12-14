@@ -2033,7 +2033,7 @@ void kgsl_unregister_device(struct kgsl_device *device)
 	kgsl_pwrctrl_uninit_sysfs(device);
 
 	wake_lock_destroy(&device->idle_wakelock);
-	pm_qos_remove_requirement(PM_QOS_CPU_DMA_LATENCY, "kgsl");
+	pm_qos_remove_request(device->dma_pm_qos_req);
 
 	idr_destroy(&device->context_idr);
 
@@ -2125,7 +2125,7 @@ kgsl_register_device(struct kgsl_device *device)
 		goto err_close_mmu;
 
 	wake_lock_init(&device->idle_wakelock, WAKE_LOCK_IDLE, device->name);
-	pm_qos_add_requirement(PM_QOS_CPU_DMA_LATENCY, "kgsl",
+	device->dma_pm_qos_req = pm_qos_add_request(PM_QOS_CPU_DMA_LATENCY,
 				PM_QOS_DEFAULT_VALUE);
 
 	idr_init(&device->context_idr);

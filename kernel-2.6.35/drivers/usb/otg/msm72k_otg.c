@@ -364,25 +364,27 @@ static void otg_pm_qos_update_latency(struct msm_otg *dev, int vote)
 		swfi_latency = pdata->swfi_latency + 1;
 
 	if (vote)
-		pm_qos_update_requirement(PM_QOS_CPU_DMA_LATENCY,
-				DRIVER_NAME, swfi_latency);
+		pm_qos_update_request(pdata->pm_qos_req_dma,
+				swfi_latency);
 	else
-		pm_qos_update_requirement(PM_QOS_CPU_DMA_LATENCY,
-				DRIVER_NAME, PM_QOS_DEFAULT_VALUE);
+		pm_qos_update_request(pdata->pm_qos_req_dma,
+				PM_QOS_DEFAULT_VALUE);
 }
 
 /* Vote for max AXI frequency if pclk is derived from peripheral bus clock */
 static void otg_pm_qos_update_axi(struct msm_otg *dev, int vote)
 {
+	struct msm_otg_platform_data *pdata = dev->pdata;
+
 	if (!depends_on_axi_freq(&dev->otg))
 		return;
 
 	if (vote)
-		pm_qos_update_requirement(PM_QOS_SYSTEM_BUS_FREQ,
-				DRIVER_NAME, MSM_AXI_MAX_FREQ);
+		pm_qos_update_request(pdata->pm_qos_req_bus,
+				MSM_AXI_MAX_FREQ);
 	else
-		pm_qos_update_requirement(PM_QOS_SYSTEM_BUS_FREQ,
-				DRIVER_NAME, PM_QOS_DEFAULT_VALUE);
+		pm_qos_update_request(pdata->pm_qos_req_bus,
+				PM_QOS_DEFAULT_VALUE);
 }
 
 /* Controller gives interrupt for every 1 mesc if 1MSIE is set in OTGSC.
@@ -2656,9 +2658,9 @@ static int __init msm_otg_probe(struct platform_device *pdev)
 	/* pclk might be derived from peripheral bus clock. If so then
 	 * vote for max AXI frequency before enabling pclk.
 	 */
-	pm_qos_add_requirement(PM_QOS_CPU_DMA_LATENCY, DRIVER_NAME,
+	dev->pdata->pm_qos_req_dma = pm_qos_add_request(PM_QOS_CPU_DMA_LATENCY,
 					PM_QOS_DEFAULT_VALUE);
-	pm_qos_add_requirement(PM_QOS_SYSTEM_BUS_FREQ, DRIVER_NAME,
+	dev->pdata->pm_qos_req_bus = pm_qos_add_request(PM_QOS_SYSTEM_BUS_FREQ,
 					PM_QOS_DEFAULT_VALUE);
 	otg_pm_qos_update_axi(dev, 1);
 
@@ -2867,8 +2869,8 @@ static int __exit msm_otg_remove(struct platform_device *pdev)
 	otg_event_driver_unregister();
 #endif
 	kfree(dev);
-	pm_qos_remove_requirement(PM_QOS_CPU_DMA_LATENCY, DRIVER_NAME);
-	pm_qos_remove_requirement(PM_QOS_SYSTEM_BUS_FREQ, DRIVER_NAME);
+	pm_qos_remove_request(dev->pdata->pm_qos_req_dma);
+	pm_qos_remove_request(dev->pdata->pm_qos_req_bus);
 	return 0;
 }
 
