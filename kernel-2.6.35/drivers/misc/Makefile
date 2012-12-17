@@ -43,6 +43,10 @@ obj-$(CONFIG_PMIC8058_NFC) += pmic8058-nfc.o
 obj-$(CONFIG_PMIC8058_UPL) += pmic8058-upl.o
 obj-$(CONFIG_MSM_MEMORY_LOW_POWER_MODE_SUSPEND_DEEP_POWER_DOWN) \
 	+= msm_migrate_pages.o
+obj-$(CONFIG_PMIC8058_XOADC) += pmic8058-xoadc.o
+obj-$(CONFIG_PMIC8058_MISC) += pmic8058-misc.o
+obj-$(CONFIG_PMIC8058_BATTALARM) += pmic8058-batt-alarm.o
+obj-$(CONFIG_TZCOM) += tzcom.o
 obj-$(CONFIG_LM3560)		+= lm356x.o
 obj-$(CONFIG_LM3561)		+= lm356x.o
 obj-$(CONFIG_FPC_CONNECTOR_TEST) += fpc_connector_test.o

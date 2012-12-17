@@ -34,6 +34,8 @@
 #include <linux/vt_kern.h>
 #include <linux/selection.h>
 
+#include <linux/smp_lock.h>	/* For the moment */
+
 #include <linux/kmod.h>
 #include <linux/nsproxy.h>
 
@@ -444,13 +446,15 @@ static void tty_set_termios_ldisc(struct tty_struct *tty, int num)
 
 static int tty_ldisc_open(struct tty_struct *tty, struct tty_ldisc *ld)
 {
-	int ret;
-
 	WARN_ON(test_and_set_bit(TTY_LDISC_OPEN, &tty->flags));
 	if (ld->ops->open) {
+		int ret;
+                /* BKL here locks verus a hangup event */
+		lock_kernel();
 		ret = ld->ops->open(tty);
 		if (ret)
 			clear_bit(TTY_LDISC_OPEN, &tty->flags);
+		unlock_kernel();
 		return ret;
 	}
 	return 0;
@@ -539,7 +543,7 @@ static int tty_ldisc_halt(struct tty_struct *tty)
 static int tty_ldisc_wait_idle(struct tty_struct *tty)
 {
 	int ret;
-	ret = wait_event_timeout(tty_ldisc_idle,
+	ret = wait_event_interruptible_timeout(tty_ldisc_idle,
 			atomic_read(&tty->ldisc->users) == 1, 5 * HZ);
 	if (ret < 0)
 		return ret;
@@ -570,6 +574,7 @@ int tty_set_ldisc(struct tty_struct *tty, int ldisc)
 	if (IS_ERR(new_ldisc))
 		return PTR_ERR(new_ldisc);
 
+	lock_kernel();
 	/*
 	 *	We need to look at the tty locking here for pty/tty pairs
 	 *	when both sides try to change in parallel.
@@ -583,10 +588,12 @@ int tty_set_ldisc(struct tty_struct *tty, int ldisc)
 	 */
 
 	if (tty->ldisc->ops->num == ldisc) {
+		unlock_kernel();
 		tty_ldisc_put(new_ldisc);
 		return 0;
 	}
 
+	unlock_kernel();
 	/*
 	 *	Problem: What do we do if this blocks ?
 	 *	We could deadlock here
@@ -607,6 +614,9 @@ int tty_set_ldisc(struct tty_struct *tty, int ldisc)
 			test_bit(TTY_LDISC_CHANGING, &tty->flags) == 0);
 		mutex_lock(&tty->ldisc_mutex);
 	}
+
+	lock_kernel();
+
 	set_bit(TTY_LDISC_CHANGING, &tty->flags);
 
 	/*
@@ -617,6 +627,8 @@ int tty_set_ldisc(struct tty_struct *tty, int ldisc)
 	tty->receive_room = 0;
 
 	o_ldisc = tty->ldisc;
+
+	unlock_kernel();
 	/*
 	 *	Make sure we don't change while someone holds a
 	 *	reference to the line discipline. The TTY_LDISC bit
@@ -644,6 +656,7 @@ int tty_set_ldisc(struct tty_struct *tty, int ldisc)
 	retval = tty_ldisc_wait_idle(tty);
 
 	mutex_lock(&tty->ldisc_mutex);
+	lock_kernel();
 
 	/* handle wait idle failure locked */
 	if (retval) {
@@ -657,6 +670,7 @@ int tty_set_ldisc(struct tty_struct *tty, int ldisc)
 		clear_bit(TTY_LDISC_CHANGING, &tty->flags);
 		mutex_unlock(&tty->ldisc_mutex);
 		tty_ldisc_put(new_ldisc);
+		unlock_kernel();
 		return -EIO;
 	}
 
@@ -699,6 +713,7 @@ enable:
 	if (o_work)
 		schedule_delayed_work(&o_tty->buf.work, 1);
 	mutex_unlock(&tty->ldisc_mutex);
+	unlock_kernel();
 	return retval;
 }
 
@@ -734,8 +749,6 @@ static int tty_ldisc_reinit(struct tty_struct *tty, int ldisc)
 
 	if (IS_ERR(ld))
 		return -1;
-
-	WARN_ON_ONCE(tty_ldisc_wait_idle(tty));
 
 	tty_ldisc_close(tty, tty->ldisc);
 	tty_ldisc_put(tty->ldisc);

@@ -1,4 +1,4 @@
-/* Copyright (c) 2010, Code Aurora Forum. All rights reserved.
+/* Copyright (c) 2010-2011, Code Aurora Forum. All rights reserved.
  *
  * Redistribution and use in source and binary forms, with or without
  * modification, are permitted provided that the following conditions are
@@ -29,19 +29,20 @@
 #define __MACH_MSM_XO_H
 
 enum msm_xo_ids {
-	TCXO_D0,
-	TCXO_D1,
-	TCXO_A0,
-	TCXO_A1,
-	PXO,
-	NUM_XO_IDS
+	MSM_XO_TCXO_D0,
+	MSM_XO_TCXO_D1,
+	MSM_XO_TCXO_A0,
+	MSM_XO_TCXO_A1,
+	MSM_XO_CORE,
+	MSM_XO_PXO,
+	NUM_MSM_XO_IDS
 };
 
 enum msm_xo_modes {
-	XO_MODE_OFF,
-	XO_MODE_PIN_CTRL,
-	XO_MODE_ON,
-	NUM_XO_MODES
+	MSM_XO_MODE_OFF,
+	MSM_XO_MODE_PIN_CTRL,
+	MSM_XO_MODE_ON,
+	NUM_MSM_XO_MODES
 };
 
 struct msm_xo_voter;
@@ -50,6 +51,7 @@ struct msm_xo_voter;
 struct msm_xo_voter *msm_xo_get(enum msm_xo_ids xo_id, const char *voter);
 void msm_xo_put(struct msm_xo_voter *xo_voter);
 int msm_xo_mode_vote(struct msm_xo_voter *xo_voter, enum msm_xo_modes xo_mode);
+int __init msm_xo_init(void);
 #else
 static inline struct msm_xo_voter *msm_xo_get(enum msm_xo_ids xo_id,
 		const char *voter)
@@ -64,6 +66,7 @@ static inline int msm_xo_mode_vote(struct msm_xo_voter *xo_voter,
 {
 	return 0;
 }
+static inline int msm_xo_init(void) { return 0; }
 #endif /* CONFIG_MSM_XO */
 
 #endif

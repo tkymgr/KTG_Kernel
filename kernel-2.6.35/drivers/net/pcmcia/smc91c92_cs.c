@@ -79,6 +79,14 @@ MODULE_FIRMWARE(FIRMWARE_NAME);
 */
 INT_MODULE_PARM(if_port, 0);
 
+#ifdef PCMCIA_DEBUG
+INT_MODULE_PARM(pc_debug, PCMCIA_DEBUG);
+static const char *version =
+"smc91c92_cs.c 1.123 2006/11/09 Donald Becker, becker@scyld.com.\n";
+#define DEBUG(n, args...) if (pc_debug>(n)) printk(KERN_DEBUG args)
+#else
+#define DEBUG(n, args...)
+#endif
 
 #define DRV_NAME	"smc91c92_cs"
 #define DRV_VERSION	"1.123"
@@ -103,6 +111,7 @@ struct smc_private {
     u_short			manfid;
     u_short			cardid;
 
+    dev_node_t			node;
     struct sk_buff		*saved_skb;
     int				packets_waiting;
     void			__iomem *base;
@@ -115,6 +124,12 @@ struct smc_private {
     struct mii_if_info		mii_if;
     int				duplex;
     int				rx_ovrn;
+};
+
+struct smc_cfg_mem {
+    tuple_t tuple;
+    cisparse_t parse;
+    u_char buf[255];
 };
 
 /* Special definitions for Megahertz multifunction cards */
@@ -314,7 +329,7 @@ static int smc91c92_probe(struct pcmcia_device *link)
     struct smc_private *smc;
     struct net_device *dev;
 
-    dev_dbg(&link->dev, "smc91c92_attach()\n");
+    DEBUG(0, "smc91c92_attach()\n");
 
     /* Create new ethernet device */
     dev = alloc_etherdev(sizeof(struct smc_private));
@@ -328,6 +343,10 @@ static int smc91c92_probe(struct pcmcia_device *link)
     link->io.NumPorts1 = 16;
     link->io.Attributes1 = IO_DATA_PATH_WIDTH_AUTO;
     link->io.IOAddrLines = 4;
+    link->irq.Attributes = IRQ_TYPE_DYNAMIC_SHARING|IRQ_HANDLE_PRESENT;
+    link->irq.IRQInfo1 = IRQ_LEVEL_ID;
+    link->irq.Handler = &smc_interrupt;
+    link->irq.Instance = dev;
     link->conf.Attributes = CONF_ENABLE_IRQ;
     link->conf.IntType = INT_MEMORY_AND_IO;
 
@@ -358,9 +377,10 @@ static void smc91c92_detach(struct pcmcia_device *link)
 {
     struct net_device *dev = link->priv;
 
-    dev_dbg(&link->dev, "smc91c92_detach\n");
+    DEBUG(0, "smc91c92_detach(0x%p)\n", link);
 
-    unregister_netdev(dev);
+    if (link->dev_node)
+	unregister_netdev(dev);
 
     smc91c92_release(link);
 
@@ -388,7 +408,34 @@ static int cvt_ascii_address(struct net_device *dev, char *s)
     return 0;
 }
 
-/*====================================================================
+/*====================================================================*/
+
+static int first_tuple(struct pcmcia_device *handle, tuple_t *tuple,
+		cisparse_t *parse)
+{
+	int i;
+
+	i = pcmcia_get_first_tuple(handle, tuple);
+	if (i != 0)
+		return i;
+	i = pcmcia_get_tuple_data(handle, tuple);
+	if (i != 0)
+		return i;
+	return pcmcia_parse_tuple(tuple, parse);
+}
+
+static int next_tuple(struct pcmcia_device *handle, tuple_t *tuple,
+		cisparse_t *parse)
+{
+	int i;
+
+	if ((i = pcmcia_get_next_tuple(handle, tuple)) != 0 ||
+			(i = pcmcia_get_tuple_data(handle, tuple)) != 0)
+		return i;
+	return pcmcia_parse_tuple(tuple, parse);
+}
+
+/*======================================================================
 
     Configuration stuff for Megahertz cards
 
@@ -443,12 +490,19 @@ static int mhz_mfc_config(struct pcmcia_device *link)
 {
     struct net_device *dev = link->priv;
     struct smc_private *smc = netdev_priv(dev);
+    struct smc_cfg_mem *cfg_mem;
     win_req_t req;
     memreq_t mem;
     int i;
 
+    cfg_mem = kmalloc(sizeof(struct smc_cfg_mem), GFP_KERNEL);
+    if (!cfg_mem)
+	    return -ENOMEM;
+
     link->conf.Attributes |= CONF_ENABLE_SPKR;
     link->conf.Status = CCSR_AUDIO_ENA;
+    link->irq.Attributes =
+	IRQ_TYPE_DYNAMIC_SHARING|IRQ_FIRST_SHARED|IRQ_HANDLE_PRESENT;
     link->io.IOAddrLines = 16;
     link->io.Attributes2 = IO_DATA_PATH_WIDTH_8;
     link->io.NumPorts2 = 8;
@@ -456,81 +510,91 @@ static int mhz_mfc_config(struct pcmcia_device *link)
     /* The Megahertz combo cards have modem-like CIS entries, so
        we have to explicitly try a bunch of port combinations. */
     if (pcmcia_loop_config(link, mhz_mfc_config_check, NULL))
-	    return -ENODEV;
-
+	goto free_cfg_mem;
     dev->base_addr = link->io.BasePort1;
 
     /* Allocate a memory window, for accessing the ISR */
     req.Attributes = WIN_DATA_WIDTH_8|WIN_MEMORY_TYPE_AM|WIN_ENABLE;
     req.Base = req.Size = 0;
     req.AccessSpeed = 0;
-    i = pcmcia_request_window(link, &req, &link->win);
+    i = pcmcia_request_window(&link, &req, &link->win);
     if (i != 0)
-	    return -ENODEV;
-
+	goto free_cfg_mem;
     smc->base = ioremap(req.Base, req.Size);
     mem.CardOffset = mem.Page = 0;
     if (smc->manfid == MANFID_MOTOROLA)
 	mem.CardOffset = link->conf.ConfigBase;
-    i = pcmcia_map_mem_page(link, link->win, &mem);
+    i = pcmcia_map_mem_page(link->win, &mem);
 
-    if ((i == 0) &&
-	(smc->manfid == MANFID_MEGAHERTZ) &&
-	(smc->cardid == PRODID_MEGAHERTZ_EM3288))
-	    mhz_3288_power(link);
+    if ((i == 0)
+	&& (smc->manfid == MANFID_MEGAHERTZ)
+	&& (smc->cardid == PRODID_MEGAHERTZ_EM3288))
+	mhz_3288_power(link);
 
-    return 0;
+free_cfg_mem:
+    kfree(cfg_mem);
+    return -ENODEV;
 }
-
-static int pcmcia_get_versmac(struct pcmcia_device *p_dev,
-			      tuple_t *tuple,
-			      void *priv)
-{
-	struct net_device *dev = priv;
-	cisparse_t parse;
-	u8 *buf;
-
-	if (pcmcia_parse_tuple(tuple, &parse))
-		return -EINVAL;
-
-	buf = parse.version_1.str + parse.version_1.ofs[3];
-
-	if ((parse.version_1.ns > 3) && (cvt_ascii_address(dev, buf) == 0))
-		return 0;
-
-	return -EINVAL;
-};
 
 static int mhz_setup(struct pcmcia_device *link)
 {
     struct net_device *dev = link->priv;
-    size_t len;
-    u8 *buf;
+    struct smc_cfg_mem *cfg_mem;
+    tuple_t *tuple;
+    cisparse_t *parse;
+    u_char *buf, *station_addr;
     int rc;
+
+    cfg_mem = kmalloc(sizeof(struct smc_cfg_mem), GFP_KERNEL);
+    if (!cfg_mem)
+	return -1;
+
+    tuple = &cfg_mem->tuple;
+    parse = &cfg_mem->parse;
+    buf = cfg_mem->buf;
+
+    tuple->Attributes = tuple->TupleOffset = 0;
+    tuple->TupleData = (cisdata_t *)buf;
+    tuple->TupleDataMax = 255;
 
     /* Read the station address from the CIS.  It is stored as the last
        (fourth) string in the Version 1 Version/ID tuple. */
-    if ((link->prod_id[3]) &&
-	(cvt_ascii_address(dev, link->prod_id[3]) == 0))
-	    return 0;
-
-    /* Workarounds for broken cards start here. */
+    tuple->DesiredTuple = CISTPL_VERS_1;
+    if (first_tuple(link, tuple, parse) != 0) {
+	rc = -1;
+	goto free_cfg_mem;
+    }
     /* Ugh -- the EM1144 card has two VERS_1 tuples!?! */
-    if (!pcmcia_loop_tuple(link, CISTPL_VERS_1, pcmcia_get_versmac, dev))
-	    return 0;
+    if (next_tuple(link, tuple, parse) != 0)
+	first_tuple(link, tuple, parse);
+    if (parse->version_1.ns > 3) {
+	station_addr = parse->version_1.str + parse->version_1.ofs[3];
+	if (cvt_ascii_address(dev, station_addr) == 0) {
+		rc = 0;
+		goto free_cfg_mem;
+	}
+    }
 
     /* Another possibility: for the EM3288, in a special tuple */
-    rc = -1;
-    len = pcmcia_get_tuple(link, 0x81, &buf);
-    if (buf && len >= 13) {
-	    buf[12] = '\0';
-	    if (cvt_ascii_address(dev, buf) == 0)
-		    rc = 0;
+    tuple->DesiredTuple = 0x81;
+    if (pcmcia_get_first_tuple(link, tuple) != 0) {
+	rc = -1;
+	goto free_cfg_mem;
     }
-    kfree(buf);
-
-    return rc;
-};
+    if (pcmcia_get_tuple_data(link, tuple) != 0) {
+	rc = -1;
+	goto free_cfg_mem;
+    }
+    buf[12] = '\0';
+    if (cvt_ascii_address(dev, buf) == 0) {
+	rc = 0;
+	goto free_cfg_mem;
+   }
+    rc = -1;
+free_cfg_mem:
+   kfree(cfg_mem);
+   return rc;
+}
 
 /*======================================================================
 
@@ -620,21 +684,58 @@ static int smc_config(struct pcmcia_device *link)
     return i;
 }
 
-
 static int smc_setup(struct pcmcia_device *link)
 {
     struct net_device *dev = link->priv;
+    struct smc_cfg_mem *cfg_mem;
+    tuple_t *tuple;
+    cisparse_t *parse;
+    cistpl_lan_node_id_t *node_id;
+    u_char *buf, *station_addr;
+    int i, rc;
+
+    cfg_mem = kmalloc(sizeof(struct smc_cfg_mem), GFP_KERNEL);
+    if (!cfg_mem)
+	    return -ENOMEM;
+
+    tuple = &cfg_mem->tuple;
+    parse = &cfg_mem->parse;
+    buf = cfg_mem->buf;
+
+    tuple->Attributes = tuple->TupleOffset = 0;
+    tuple->TupleData = (cisdata_t *)buf;
+    tuple->TupleDataMax = 255;
 
     /* Check for a LAN function extension tuple */
-    if (!pcmcia_get_mac_from_cis(link, dev))
-	    return 0;
-
+    tuple->DesiredTuple = CISTPL_FUNCE;
+    i = first_tuple(link, tuple, parse);
+    while (i == 0) {
+	if (parse->funce.type == CISTPL_FUNCE_LAN_NODE_ID)
+	    break;
+	i = next_tuple(link, tuple, parse);
+    }
+    if (i == 0) {
+	node_id = (cistpl_lan_node_id_t *)parse->funce.data;
+	if (node_id->nb == 6) {
+	    for (i = 0; i < 6; i++)
+		dev->dev_addr[i] = node_id->id[i];
+	    rc = 0;
+	    goto free_cfg_mem;
+	}
+    }
     /* Try the third string in the Version 1 Version/ID tuple. */
     if (link->prod_id[2]) {
-	    if (cvt_ascii_address(dev, link->prod_id[2]) == 0)
-		    return 0;
+	station_addr = link->prod_id[2];
+	if (cvt_ascii_address(dev, station_addr) == 0) {
+		rc = 0;
+		goto free_cfg_mem;
+	}
     }
-    return -1;
+
+    rc = -1;
+free_cfg_mem:
+    kfree(cfg_mem);
+    return rc;
 }
 
 /*====================================================================*/
@@ -647,6 +748,8 @@ static int osi_config(struct pcmcia_device *link)
 
     link->conf.Attributes |= CONF_ENABLE_SPKR;
     link->conf.Status = CCSR_AUDIO_ENA;
+    link->irq.Attributes =
+	IRQ_TYPE_DYNAMIC_SHARING|IRQ_FIRST_SHARED|IRQ_HANDLE_PRESENT;
     link->io.NumPorts1 = 64;
     link->io.Attributes2 = IO_DATA_PATH_WIDTH_8;
     link->io.NumPorts2 = 8;
@@ -691,31 +794,41 @@ static int osi_load_firmware(struct pcmcia_device *link)
 	return err;
 }
 
-static int pcmcia_osi_mac(struct pcmcia_device *p_dev,
-			  tuple_t *tuple,
-			  void *priv)
-{
-	struct net_device *dev = priv;
-	int i;
-
-	if (tuple->TupleDataLen < 8)
-		return -EINVAL;
-	if (tuple->TupleData[0] != 0x04)
-		return -EINVAL;
-	for (i = 0; i < 6; i++)
-		dev->dev_addr[i] = tuple->TupleData[i+2];
-	return 0;
-};
-
-
 static int osi_setup(struct pcmcia_device *link, u_short manfid, u_short cardid)
 {
     struct net_device *dev = link->priv;
-    int rc;
+    struct smc_cfg_mem *cfg_mem;
+    tuple_t *tuple;
+    u_char *buf;
+    int i, rc;
+
+    cfg_mem = kmalloc(sizeof(struct smc_cfg_mem), GFP_KERNEL);
+    if (!cfg_mem)
+        return -1;
+
+    tuple = &cfg_mem->tuple;
+    buf = cfg_mem->buf;
+
+    tuple->Attributes = TUPLE_RETURN_COMMON;
+    tuple->TupleData = (cisdata_t *)buf;
+    tuple->TupleDataMax = 255;
+    tuple->TupleOffset = 0;
 
     /* Read the station address from tuple 0x90, subtuple 0x04 */
-    if (pcmcia_loop_tuple(link, 0x90, pcmcia_osi_mac, dev))
-	    return -1;
+    tuple->DesiredTuple = 0x90;
+    i = pcmcia_get_first_tuple(link, tuple);
+    while (i == 0) {
+	i = pcmcia_get_tuple_data(link, tuple);
+	if ((i != 0) || (buf[0] == 0x04))
+	    break;
+	i = pcmcia_get_next_tuple(link, tuple);
+    }
+    if (i != 0) {
+	rc = -1;
+	goto free_cfg_mem;
+    }
+    for (i = 0; i < 6; i++)
+	dev->dev_addr[i] = buf[i+2];
 
     if (((manfid == MANFID_OSITECH) &&
 	 (cardid == PRODID_OSITECH_SEVEN)) ||
@@ -723,17 +836,20 @@ static int osi_setup(struct pcmcia_device *link, u_short manfid, u_short cardid)
 	 (cardid == PRODID_PSION_NET100))) {
 	rc = osi_load_firmware(link);
 	if (rc)
-		return rc;
+		goto free_cfg_mem;
     } else if (manfid == MANFID_OSITECH) {
 	/* Make sure both functions are powered up */
 	set_bits(0x300, link->io.BasePort1 + OSITECH_AUI_PWR);
 	/* Now, turn on the interrupt for both card functions */
 	set_bits(0x300, link->io.BasePort1 + OSITECH_RESET_ISR);
-	dev_dbg(&link->dev, "AUI/PWR: %4.4x RESET/ISR: %4.4x\n",
+	DEBUG(2, "AUI/PWR: %4.4x RESET/ISR: %4.4x\n",
 	      inw(link->io.BasePort1 + OSITECH_AUI_PWR),
 	      inw(link->io.BasePort1 + OSITECH_RESET_ISR));
     }
-    return 0;
+    rc = 0;
+free_cfg_mem:
+   kfree(cfg_mem);
+   return rc;
 }
 
 static int smc91c92_suspend(struct pcmcia_device *link)
@@ -843,6 +959,12 @@ static int check_sig(struct pcmcia_device *link)
 
 ======================================================================*/
 
+#define CS_EXIT_TEST(ret, svc, label)	\
+if (ret != 0) {				\
+	cs_error(link, svc, ret);	\
+	goto label; 			\
+}
+
 static int smc91c92_config(struct pcmcia_device *link)
 {
     struct net_device *dev = link->priv;
@@ -852,7 +974,7 @@ static int smc91c92_config(struct pcmcia_device *link)
     unsigned int ioaddr;
     u_long mir;
 
-    dev_dbg(&link->dev, "smc91c92_config\n");
+    DEBUG(0, "smc91c92_config(0x%p)\n", link);
 
     smc->manfid = link->manf_id;
     smc->cardid = link->card_id;
@@ -868,20 +990,17 @@ static int smc91c92_config(struct pcmcia_device *link)
     } else {
 	i = smc_config(link);
     }
-    if (i)
-	    goto config_failed;
+    CS_EXIT_TEST(i, RequestIO, config_failed);
 
-    i = pcmcia_request_irq(link, smc_interrupt);
-    if (i)
-	    goto config_failed;
+    i = pcmcia_request_irq(link, &link->irq);
+    CS_EXIT_TEST(i, RequestIRQ, config_failed);
     i = pcmcia_request_configuration(link, &link->conf);
-    if (i)
-	    goto config_failed;
+    CS_EXIT_TEST(i, RequestConfiguration, config_failed);
 
     if (smc->manfid == MANFID_MOTOROLA)
 	mot_config(link);
 
-    dev->irq = link->irq;
+    dev->irq = link->irq.AssignedIRQ;
 
     if ((if_port >= 0) && (if_port <= 2))
 	dev->if_port = if_port;
@@ -905,7 +1024,7 @@ static int smc91c92_config(struct pcmcia_device *link)
 
     if (i != 0) {
 	printk(KERN_NOTICE "smc91c92_cs: Unable to find hardware address.\n");
-	goto config_failed;
+	goto config_undo;
     }
 
     smc->duplex = 0;
@@ -954,12 +1073,16 @@ static int smc91c92_config(struct pcmcia_device *link)
 	SMC_SELECT_BANK(0);
     }
 
-    SET_NETDEV_DEV(dev, &link->dev);
+    link->dev_node = &smc->node;
+    SET_NETDEV_DEV(dev, &handle_to_dev(link));
 
     if (register_netdev(dev) != 0) {
 	printk(KERN_ERR "smc91c92_cs: register_netdev() failed\n");
+	link->dev_node = NULL;
 	goto config_undo;
     }
+
+    strcpy(smc->node.dev_name, dev->name);
 
     printk(KERN_INFO "%s: smc91c%s rev %d: io %#3lx, irq %d, "
 	   "hw_addr %pM\n",
@@ -977,7 +1100,7 @@ static int smc91c92_config(struct pcmcia_device *link)
 
     if (smc->cfg & CFG_MII_SELECT) {
 	if (smc->mii_if.phy_id != -1) {
-	    dev_dbg(&link->dev, "  MII transceiver at index %d, status %x.\n",
+	    DEBUG(0, "  MII transceiver at index %d, status %x.\n",
 		  smc->mii_if.phy_id, j);
 	} else {
     	    printk(KERN_NOTICE "  No MII transceivers found!\n");
@@ -987,9 +1110,8 @@ static int smc91c92_config(struct pcmcia_device *link)
 
 config_undo:
     unregister_netdev(dev);
-config_failed:
+config_failed:			/* CS_EXIT_TEST() calls jump to here... */
     smc91c92_release(link);
-    free_netdev(dev);
     return -ENODEV;
 } /* smc91c92_config */
 
@@ -1003,7 +1125,7 @@ config_failed:
 
 static void smc91c92_release(struct pcmcia_device *link)
 {
-	dev_dbg(&link->dev, "smc91c92_release\n");
+	DEBUG(0, "smc91c92_release(0x%p)\n", link);
 	if (link->win) {
 		struct net_device *dev = link->priv;
 		struct smc_private *smc = netdev_priv(dev);
@@ -1100,10 +1222,10 @@ static int smc_open(struct net_device *dev)
     struct smc_private *smc = netdev_priv(dev);
     struct pcmcia_device *link = smc->p_dev;
 
-    dev_dbg(&link->dev, "%s: smc_open(%p), ID/Window %4.4x.\n",
-	  dev->name, dev, inw(dev->base_addr + BANK_SELECT));
 #ifdef PCMCIA_DEBUG
-    smc_dump(dev);
+    DEBUG(0, "%s: smc_open(%p), ID/Window %4.4x.\n",
+	  dev->name, dev, inw(dev->base_addr + BANK_SELECT));
+    if (pc_debug > 1) smc_dump(dev);
 #endif
 
     /* Check that the PCMCIA card is still here. */
@@ -1138,7 +1260,7 @@ static int smc_close(struct net_device *dev)
     struct pcmcia_device *link = smc->p_dev;
     unsigned int ioaddr = dev->base_addr;
 
-    dev_dbg(&link->dev, "%s: smc_close(), status %4.4x.\n",
+    DEBUG(0, "%s: smc_close(), status %4.4x.\n",
 	  dev->name, inw(ioaddr + BANK_SELECT));
 
     netif_stop_queue(dev);
@@ -1205,7 +1327,7 @@ static void smc_hardware_send_packet(struct net_device * dev)
 	u_char *buf = skb->data;
 	u_int length = skb->len; /* The chip will pad to ethernet min. */
 
-	pr_debug("%s: Trying to xmit packet of length %d.\n",
+	DEBUG(2, "%s: Trying to xmit packet of length %d.\n",
 	      dev->name, length);
 	
 	/* send the packet length: +6 for status word, length, and ctl */
@@ -1229,6 +1351,7 @@ static void smc_hardware_send_packet(struct net_device * dev)
     dev_kfree_skb_irq(skb);
     dev->trans_start = jiffies;
     netif_start_queue(dev);
+    return;
 }
 
 /*====================================================================*/
@@ -1243,7 +1366,7 @@ static void smc_tx_timeout(struct net_device *dev)
 	   dev->name, inw(ioaddr)&0xff, inw(ioaddr + 2));
     dev->stats.tx_errors++;
     smc_reset(dev);
-    dev->trans_start = jiffies; /* prevent tx timeout */
+    dev->trans_start = jiffies;
     smc->saved_skb = NULL;
     netif_wake_queue(dev);
 }
@@ -1259,7 +1382,7 @@ static netdev_tx_t smc_start_xmit(struct sk_buff *skb,
 
     netif_stop_queue(dev);
 
-    pr_debug("%s: smc_start_xmit(length = %d) called,"
+    DEBUG(2, "%s: smc_start_xmit(length = %d) called,"
 	  " status %4.4x.\n", dev->name, skb->len, inw(ioaddr + 2));
 
     if (smc->saved_skb) {
@@ -1306,7 +1429,7 @@ static netdev_tx_t smc_start_xmit(struct sk_buff *skb,
     }
 
     /* Otherwise defer until the Tx-space-allocated interrupt. */
-    pr_debug("%s: memory allocation deferred.\n", dev->name);
+    DEBUG(2, "%s: memory allocation deferred.\n", dev->name);
     outw((IM_ALLOC_INT << 8) | (ir & 0xff00), ioaddr + INTERRUPT);
     spin_unlock_irqrestore(&smc->lock, flags);
 
@@ -1358,6 +1481,7 @@ static void smc_tx_err(struct net_device * dev)
     smc->packets_waiting--;
 
     outw(saved_packet, ioaddr + PNR_ARR);
+    return;
 }
 
 /*====================================================================*/
@@ -1370,7 +1494,7 @@ static void smc_eph_irq(struct net_device *dev)
 
     SMC_SELECT_BANK(0);
     ephs = inw(ioaddr + EPH);
-    pr_debug("%s: Ethernet protocol handler interrupt, status"
+    DEBUG(2, "%s: Ethernet protocol handler interrupt, status"
 	  " %4.4x.\n", dev->name, ephs);
     /* Could be a counter roll-over warning: update stats. */
     card_stats = inw(ioaddr + COUNTER);
@@ -1410,7 +1534,7 @@ static irqreturn_t smc_interrupt(int irq, void *dev_id)
 
     ioaddr = dev->base_addr;
 
-    pr_debug("%s: SMC91c92 interrupt %d at %#x.\n", dev->name,
+    DEBUG(3, "%s: SMC91c92 interrupt %d at %#x.\n", dev->name,
 	  irq, ioaddr);
 
     spin_lock(&smc->lock);
@@ -1419,7 +1543,7 @@ static irqreturn_t smc_interrupt(int irq, void *dev_id)
     if ((saved_bank & 0xff00) != 0x3300) {
 	/* The device does not exist -- the card could be off-line, or
 	   maybe it has been ejected. */
-	pr_debug("%s: SMC91c92 interrupt %d for non-existent"
+	DEBUG(1, "%s: SMC91c92 interrupt %d for non-existent"
 	      "/ejected device.\n", dev->name, irq);
 	handled = 0;
 	goto irq_done;
@@ -1433,7 +1557,7 @@ static irqreturn_t smc_interrupt(int irq, void *dev_id)
 
     do { /* read the status flag, and mask it */
 	status = inw(ioaddr + INTERRUPT) & 0xff;
-	pr_debug("%s: Status is %#2.2x (mask %#2.2x).\n", dev->name,
+	DEBUG(3, "%s: Status is %#2.2x (mask %#2.2x).\n", dev->name,
 	      status, mask);
 	if ((status & mask) == 0) {
 	    if (bogus_cnt == INTR_WORK)
@@ -1478,7 +1602,7 @@ static irqreturn_t smc_interrupt(int irq, void *dev_id)
 	    smc_eph_irq(dev);
     } while (--bogus_cnt);
 
-    pr_debug("  Restoring saved registers mask %2.2x bank %4.4x"
+    DEBUG(3, "  Restoring saved registers mask %2.2x bank %4.4x"
 	  " pointer %4.4x.\n", mask, saved_bank, saved_pointer);
 
     /* restore state register */
@@ -1486,7 +1610,7 @@ static irqreturn_t smc_interrupt(int irq, void *dev_id)
     outw(saved_pointer, ioaddr + POINTER);
     SMC_SELECT_BANK(saved_bank);
 
-    pr_debug("%s: Exiting interrupt IRQ%d.\n", dev->name, irq);
+    DEBUG(3, "%s: Exiting interrupt IRQ%d.\n", dev->name, irq);
 
 irq_done:
 
@@ -1505,20 +1629,12 @@ irq_done:
 	writeb(cor & ~COR_IREQ_ENA, smc->base + MOT_LAN + CISREG_COR);
 	writeb(cor, smc->base + MOT_LAN + CISREG_COR);
     }
-
-    if ((smc->base != NULL) &&  /* Megahertz MFC's */
-	(smc->manfid == MANFID_MEGAHERTZ) &&
-	(smc->cardid == PRODID_MEGAHERTZ_EM3288)) {
-
-	u_char tmp;
-	tmp = readb(smc->base+MEGAHERTZ_ISR);
-	tmp = readb(smc->base+MEGAHERTZ_ISR);
-
-	/* Retrigger interrupt if needed */
-	writeb(tmp, smc->base + MEGAHERTZ_ISR);
-	writeb(tmp, smc->base + MEGAHERTZ_ISR);
+#ifdef DOES_NOT_WORK
+    if (smc->base != NULL) { /* Megahertz MFC's */
+	readb(smc->base+MEGAHERTZ_ISR);
+	readb(smc->base+MEGAHERTZ_ISR);
     }
-
+#endif
     spin_unlock(&smc->lock);
     return IRQ_RETVAL(handled);
 }
@@ -1545,7 +1661,7 @@ static void smc_rx(struct net_device *dev)
     rx_status = inw(ioaddr + DATA_1);
     packet_length = inw(ioaddr + DATA_1) & 0x07ff;
 
-    pr_debug("%s: Receive status %4.4x length %d.\n",
+    DEBUG(2, "%s: Receive status %4.4x length %d.\n",
 	  dev->name, rx_status, packet_length);
 
     if (!(rx_status & RS_ERRORS)) {		
@@ -1556,7 +1672,7 @@ static void smc_rx(struct net_device *dev)
 	skb = dev_alloc_skb(packet_length+2);
 	
 	if (skb == NULL) {
-	    pr_debug("%s: Low memory, packet dropped.\n", dev->name);
+	    DEBUG(1, "%s: Low memory, packet dropped.\n", dev->name);
 	    dev->stats.rx_dropped++;
 	    outw(MC_RELEASE, ioaddr + MMU_CMD);
 	    return;
@@ -1585,6 +1701,29 @@ static void smc_rx(struct net_device *dev)
     }
     /* Let the MMU free the memory of this packet. */
     outw(MC_RELEASE, ioaddr + MMU_CMD);
+
+    return;
+}
+
+/*======================================================================
+
+    Calculate values for the hardware multicast filter hash table.
+
+======================================================================*/
+
+static void fill_multicast_tbl(int count, struct dev_mc_list *addrs,
+			       u_char *multicast_table)
+{
+    struct dev_mc_list	*mc_addr;
+
+    for (mc_addr = addrs;  mc_addr && count-- > 0;  mc_addr = mc_addr->next) {
+	u_int position = ether_crc(6, mc_addr->dmi_addr);
+#ifndef final_version		/* Verify multicast address. */
+	if ((mc_addr->dmi_addr[0] & 1) == 0)
+	    continue;
+#endif
+	multicast_table[position >> 29] |= 1 << ((position >> 26) & 7);
+    }
 }
 
 /*======================================================================
@@ -1602,25 +1741,18 @@ static void set_rx_mode(struct net_device *dev)
 {
     unsigned int ioaddr = dev->base_addr;
     struct smc_private *smc = netdev_priv(dev);
-    unsigned char multicast_table[8];
+    u_int multicast_table[ 2 ] = { 0, };
     unsigned long flags;
     u_short rx_cfg_setting;
-    int i;
-
-    memset(multicast_table, 0, sizeof(multicast_table));
 
     if (dev->flags & IFF_PROMISC) {
 	rx_cfg_setting = RxStripCRC | RxEnable | RxPromisc | RxAllMulti;
     } else if (dev->flags & IFF_ALLMULTI)
 	rx_cfg_setting = RxStripCRC | RxEnable | RxAllMulti;
     else {
-	if (!netdev_mc_empty(dev)) {
-	    struct netdev_hw_addr *ha;
-
-	    netdev_for_each_mc_addr(ha, dev) {
-		u_int position = ether_crc(6, ha->addr);
-		multicast_table[position >> 29] |= 1 << ((position >> 26) & 7);
-	    }
+	if (dev->mc_count)  {
+	    fill_multicast_tbl(dev->mc_count, dev->mc_list,
+			       (u_char *)multicast_table);
 	}
 	rx_cfg_setting = RxStripCRC | RxEnable;
     }
@@ -1628,12 +1760,14 @@ static void set_rx_mode(struct net_device *dev)
     /* Load MC table and Rx setting into the chip without interrupts. */
     spin_lock_irqsave(&smc->lock, flags);
     SMC_SELECT_BANK(3);
-    for (i = 0; i < 8; i++)
-	outb(multicast_table[i], ioaddr + MULTICAST0 + i);
+    outl(multicast_table[0], ioaddr + MULTICAST0);
+    outl(multicast_table[1], ioaddr + MULTICAST4);
     SMC_SELECT_BANK(0);
     outw(rx_cfg_setting, ioaddr + RCR);
     SMC_SELECT_BANK(2);
     spin_unlock_irqrestore(&smc->lock, flags);
+
+    return;
 }
 
 /*======================================================================
@@ -1698,7 +1832,7 @@ static void smc_reset(struct net_device *dev)
     struct smc_private *smc = netdev_priv(dev);
     int i;
 
-    pr_debug("%s: smc91c92 reset called.\n", dev->name);
+    DEBUG(0, "%s: smc91c92 reset called.\n", dev->name);
 
     /* The first interaction must be a write to bring the chip out
        of sleep mode. */
@@ -1796,29 +1930,22 @@ static void media_check(u_long arg)
     SMC_SELECT_BANK(1);
     media |= (inw(ioaddr + CONFIG) & CFG_AUI_SELECT) ? 2 : 1;
 
-    SMC_SELECT_BANK(saved_bank);
-    spin_unlock_irqrestore(&smc->lock, flags);
-
     /* Check for pending interrupt with watchdog flag set: with
        this, we can limp along even if the interrupt is blocked */
     if (smc->watchdog++ && ((i>>8) & i)) {
 	if (!smc->fast_poll)
 	    printk(KERN_INFO "%s: interrupt(s) dropped!\n", dev->name);
-	local_irq_save(flags);
 	smc_interrupt(dev->irq, dev);
-	local_irq_restore(flags);
 	smc->fast_poll = HZ;
     }
     if (smc->fast_poll) {
 	smc->fast_poll--;
 	smc->media.expires = jiffies + HZ/100;
 	add_timer(&smc->media);
+	SMC_SELECT_BANK(saved_bank);
+	spin_unlock_irqrestore(&smc->lock, flags);
 	return;
     }
-
-    spin_lock_irqsave(&smc->lock, flags);
-
-    saved_bank = inw(ioaddr + BANK_SELECT);
 
     if (smc->cfg & CFG_MII_SELECT) {
 	if (smc->mii_if.phy_id < 0)
@@ -1977,16 +2104,15 @@ static int smc_get_settings(struct net_device *dev, struct ethtool_cmd *ecmd)
 	unsigned int ioaddr = dev->base_addr;
 	u16 saved_bank = inw(ioaddr + BANK_SELECT);
 	int ret;
-	unsigned long flags;
 
-	spin_lock_irqsave(&smc->lock, flags);
+	spin_lock_irq(&smc->lock);
 	SMC_SELECT_BANK(3);
 	if (smc->cfg & CFG_MII_SELECT)
 		ret = mii_ethtool_gset(&smc->mii_if, ecmd);
 	else
 		ret = smc_netdev_get_ecmd(dev, ecmd);
 	SMC_SELECT_BANK(saved_bank);
-	spin_unlock_irqrestore(&smc->lock, flags);
+	spin_unlock_irq(&smc->lock);
 	return ret;
 }
 
@@ -1996,16 +2122,15 @@ static int smc_set_settings(struct net_device *dev, struct ethtool_cmd *ecmd)
 	unsigned int ioaddr = dev->base_addr;
 	u16 saved_bank = inw(ioaddr + BANK_SELECT);
 	int ret;
-	unsigned long flags;
 
-	spin_lock_irqsave(&smc->lock, flags);
+	spin_lock_irq(&smc->lock);
 	SMC_SELECT_BANK(3);
 	if (smc->cfg & CFG_MII_SELECT)
 		ret = mii_ethtool_sset(&smc->mii_if, ecmd);
 	else
 		ret = smc_netdev_set_ecmd(dev, ecmd);
 	SMC_SELECT_BANK(saved_bank);
-	spin_unlock_irqrestore(&smc->lock, flags);
+	spin_unlock_irq(&smc->lock);
 	return ret;
 }
 
@@ -2015,15 +2140,26 @@ static u32 smc_get_link(struct net_device *dev)
 	unsigned int ioaddr = dev->base_addr;
 	u16 saved_bank = inw(ioaddr + BANK_SELECT);
 	u32 ret;
-	unsigned long flags;
 
-	spin_lock_irqsave(&smc->lock, flags);
+	spin_lock_irq(&smc->lock);
 	SMC_SELECT_BANK(3);
 	ret = smc_link_ok(dev);
 	SMC_SELECT_BANK(saved_bank);
-	spin_unlock_irqrestore(&smc->lock, flags);
+	spin_unlock_irq(&smc->lock);
 	return ret;
 }
+
+#ifdef PCMCIA_DEBUG
+static u32 smc_get_msglevel(struct net_device *dev)
+{
+	return pc_debug;
+}
+
+static void smc_set_msglevel(struct net_device *dev, u32 val)
+{
+	pc_debug = val;
+}
+#endif
 
 static int smc_nway_reset(struct net_device *dev)
 {
@@ -2048,6 +2184,10 @@ static const struct ethtool_ops ethtool_ops = {
 	.get_settings = smc_get_settings,
 	.set_settings = smc_set_settings,
 	.get_link = smc_get_link,
+#ifdef PCMCIA_DEBUG
+	.get_msglevel = smc_get_msglevel,
+	.set_msglevel = smc_set_msglevel,
+#endif
 	.nway_reset = smc_nway_reset,
 };
 
@@ -2058,17 +2198,16 @@ static int smc_ioctl (struct net_device *dev, struct ifreq *rq, int cmd)
 	int rc = 0;
 	u16 saved_bank;
 	unsigned int ioaddr = dev->base_addr;
-	unsigned long flags;
 
 	if (!netif_running(dev))
 		return -EINVAL;
 
-	spin_lock_irqsave(&smc->lock, flags);
+	spin_lock_irq(&smc->lock);
 	saved_bank = inw(ioaddr + BANK_SELECT);
 	SMC_SELECT_BANK(3);
 	rc = generic_mii_ioctl(&smc->mii_if, mii, cmd, NULL);
 	SMC_SELECT_BANK(saved_bank);
-	spin_unlock_irqrestore(&smc->lock, flags);
+	spin_unlock_irq(&smc->lock);
 	return rc;
 }
 

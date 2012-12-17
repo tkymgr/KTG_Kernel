@@ -58,10 +58,10 @@ struct input_absinfo {
 
 #define EVIOCGVERSION		_IOR('E', 0x01, int)			/* get driver version */
 #define EVIOCGID		_IOR('E', 0x02, struct input_id)	/* get device ID */
-#define EVIOCGREP		_IOR('E', 0x03, int[2])			/* get repeat settings */
-#define EVIOCSREP		_IOW('E', 0x03, int[2])			/* set repeat settings */
-#define EVIOCGKEYCODE		_IOR('E', 0x04, int[2])			/* get keycode */
-#define EVIOCSKEYCODE		_IOW('E', 0x04, int[2])			/* set keycode */
+#define EVIOCGREP		_IOR('E', 0x03, unsigned int[2])	/* get repeat settings */
+#define EVIOCSREP		_IOW('E', 0x03, unsigned int[2])	/* set repeat settings */
+#define EVIOCGKEYCODE		_IOR('E', 0x04, unsigned int[2])	/* get keycode */
+#define EVIOCSKEYCODE		_IOW('E', 0x04, unsigned int[2])	/* set keycode */
 
 #define EVIOCGNAME(len)		_IOC(_IOC_READ, 'E', 0x06, len)		/* get device name */
 #define EVIOCGPHYS(len)		_IOC(_IOC_READ, 'E', 0x07, len)		/* get physical location */
@@ -378,7 +378,7 @@ struct input_absinfo {
 #define KEY_WIMAX		246
 #define KEY_RFKILL		247	/* Key that controls all radios */
 
-/* Range 248 - 255 is reserved for special needs of AT keyboard driver */
+/* Code 255 is reserved for special needs of AT keyboard driver */
 
 #define BTN_MISC		0x100
 #define BTN_0			0x100
@@ -643,11 +643,6 @@ struct input_absinfo {
 
 /* We avoid low common keys in module aliases so they don't get huge. */
 #define KEY_MIN_INTERESTING	KEY_MUTE
-
-/* REVISIT: keys for camera related functions */
-#define KEY_CAMERA_FOCUS	0x210
-#define KEY_CAMERA_SNAPSHOT	0x2fe
-
 #define KEY_MAX			0x2ff
 #define KEY_CNT			(KEY_MAX+1)
 
@@ -946,7 +941,7 @@ struct ff_periodic_effect {
 	struct ff_envelope envelope;
 
 	__u32 custom_len;
-	__s16 *custom_data;
+	__s16 __user *custom_data;
 };
 
 /**
@@ -1148,8 +1143,10 @@ struct input_dev {
 	unsigned int keycodemax;
 	unsigned int keycodesize;
 	void *keycode;
-	int (*setkeycode)(struct input_dev *dev, int scancode, int keycode);
-	int (*getkeycode)(struct input_dev *dev, int scancode, int *keycode);
+	int (*setkeycode)(struct input_dev *dev,
+			  unsigned int scancode, unsigned int keycode);
+	int (*getkeycode)(struct input_dev *dev,
+			  unsigned int scancode, unsigned int *keycode);
 
 	struct ff_device *ff;
 
@@ -1158,7 +1155,7 @@ struct input_dev {
 
 	int sync;
 
-	int abs[ABS_MAX + 1];
+	int abs[ABS_CNT];
 	int rep[REP_MAX + 1];
 
 	unsigned long key[BITS_TO_LONGS(KEY_CNT)];
@@ -1166,11 +1163,11 @@ struct input_dev {
 	unsigned long snd[BITS_TO_LONGS(SND_CNT)];
 	unsigned long sw[BITS_TO_LONGS(SW_CNT)];
 
-	int absmax[ABS_MAX + 1];
-	int absmin[ABS_MAX + 1];
-	int absfuzz[ABS_MAX + 1];
-	int absflat[ABS_MAX + 1];
-	int absres[ABS_MAX + 1];
+	int absmax[ABS_CNT];
+	int absmin[ABS_CNT];
+	int absfuzz[ABS_CNT];
+	int absflat[ABS_CNT];
+	int absres[ABS_CNT];
 
 	int (*open)(struct input_dev *dev);
 	void (*close)(struct input_dev *dev);
@@ -1296,7 +1293,6 @@ struct input_handler {
 	const char *name;
 
 	const struct input_device_id *id_table;
-	const struct input_device_id *blacklist;
 
 	struct list_head	h_list;
 	struct list_head	node;
@@ -1422,8 +1418,10 @@ static inline void input_set_abs_params(struct input_dev *dev, int axis, int min
 	dev->absbit[BIT_WORD(axis)] |= BIT_MASK(axis);
 }
 
-int input_get_keycode(struct input_dev *dev, int scancode, int *keycode);
-int input_set_keycode(struct input_dev *dev, int scancode, int keycode);
+int input_get_keycode(struct input_dev *dev,
+		      unsigned int scancode, unsigned int *keycode);
+int input_set_keycode(struct input_dev *dev,
+		      unsigned int scancode, unsigned int keycode);
 
 extern struct class input_class;
 

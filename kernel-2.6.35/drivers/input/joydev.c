@@ -48,15 +48,15 @@ struct joydev {
 	struct mutex mutex;
 	struct device dev;
 
-	struct js_corr corr[ABS_MAX + 1];
+	struct js_corr corr[ABS_CNT];
 	struct JS_DATA_SAVE_TYPE glue;
 	int nabs;
 	int nkey;
 	__u16 keymap[KEY_MAX - BTN_MISC + 1];
 	__u16 keypam[KEY_MAX - BTN_MISC + 1];
-	__u8 absmap[ABS_MAX + 1];
-	__u8 abspam[ABS_MAX + 1];
-	__s16 abs[ABS_MAX + 1];
+	__u8 absmap[ABS_CNT];
+	__u8 abspam[ABS_CNT];
+	__s16 abs[ABS_CNT];
 };
 
 struct joydev_client {
@@ -287,6 +287,8 @@ static int joydev_open(struct inode *inode, struct file *file)
 		goto err_free_client;
 
 	file->private_data = client;
+	nonseekable_open(inode, file);
+
 	return 0;
 
  err_free_client:
@@ -779,6 +781,26 @@ static void joydev_cleanup(struct joydev *joydev)
 		input_close_device(handle);
 }
 
+
+static bool joydev_match(struct input_handler *handler, struct input_dev *dev)
+{
+	/* Avoid touchpads and touchscreens */
+	if (test_bit(EV_KEY, dev->evbit) && test_bit(BTN_TOUCH, dev->keybit))
+		return false;
+
+	/* Avoid tablets, digitisers and similar devices */
+	if (test_bit(EV_KEY, dev->evbit) && test_bit(BTN_DIGI, dev->keybit))
+		return false;
+
+	/* Avoid Microsoft Wired Keyboard 600 */
+	if (dev->id.bustype == BUS_USB &&
+		dev->id.vendor == 0x045E &&
+		dev->id.product == 0x0750)
+		return false;
+
+	return true;
+}
+
 static int joydev_connect(struct input_handler *handler, struct input_dev *dev,
 			  const struct input_device_id *id)
 {
@@ -814,7 +836,7 @@ static int joydev_connect(struct input_handler *handler, struct input_dev *dev,
 	joydev->handle.handler = handler;
 	joydev->handle.private = joydev;
 
-	for (i = 0; i < ABS_MAX + 1; i++)
+	for (i = 0; i < ABS_CNT; i++)
 		if (test_bit(i, dev->absbit)) {
 			joydev->absmap[i] = joydev->nabs;
 			joydev->abspam[joydev->nabs] = i;
@@ -898,28 +920,6 @@ static void joydev_disconnect(struct input_handle *handle)
 	put_device(&joydev->dev);
 }
 
-static const struct input_device_id joydev_blacklist[] = {
-	{
-		.flags = INPUT_DEVICE_ID_MATCH_EVBIT |
-				INPUT_DEVICE_ID_MATCH_KEYBIT,
-		.evbit = { BIT_MASK(EV_KEY) },
-		.keybit = { [BIT_WORD(BTN_TOUCH)] = BIT_MASK(BTN_TOUCH) },
-	},	/* Avoid itouchpads and touchscreens */
-	{
-		.flags = INPUT_DEVICE_ID_MATCH_EVBIT |
-				INPUT_DEVICE_ID_MATCH_KEYBIT,
-		.evbit = { BIT_MASK(EV_KEY) },
-		.keybit = { [BIT_WORD(BTN_DIGI)] = BIT_MASK(BTN_DIGI) },
-	},	/* Avoid tablets, digitisers and similar devices */
-	{
-		.flags = INPUT_DEVICE_ID_MATCH_DEVICE,
-		.bustype = BUS_USB,
-		.vendor = 0x045E,
-		.product = 0x0750,
-	},	/* Avoid Microsoft Wired Keyboard 600 */
-	{ }	/* Terminating entry */
-};
-
 static const struct input_device_id joydev_ids[] = {
 	{
 		.flags = INPUT_DEVICE_ID_MATCH_EVBIT |
@@ -945,6 +945,30 @@ static const struct input_device_id joydev_ids[] = {
 		.absbit = { BIT_MASK(ABS_THROTTLE) },
 		.bustype = BUS_USB,
 	},
+	{
+		.flags = INPUT_DEVICE_ID_MATCH_EVBIT |
+				INPUT_DEVICE_ID_MATCH_KEYBIT |
+				INPUT_DEVICE_ID_MATCH_BUS,
+		.evbit = { BIT_MASK(EV_KEY) },
+		.keybit = {[BIT_WORD(BTN_JOYSTICK)] = BIT_MASK(BTN_JOYSTICK) },
+		.bustype = BUS_USB,
+	},
+	{
+		.flags = INPUT_DEVICE_ID_MATCH_EVBIT |
+				INPUT_DEVICE_ID_MATCH_KEYBIT |
+				INPUT_DEVICE_ID_MATCH_BUS,
+		.evbit = { BIT_MASK(EV_KEY) },
+		.keybit = { [BIT_WORD(BTN_GAMEPAD)] = BIT_MASK(BTN_GAMEPAD) },
+		.bustype = BUS_USB,
+	},
+	{
+		.flags = INPUT_DEVICE_ID_MATCH_EVBIT |
+				INPUT_DEVICE_ID_MATCH_KEYBIT |
+				INPUT_DEVICE_ID_MATCH_BUS,
+		.evbit = { BIT_MASK(EV_KEY) },
+		.keybit = { [BIT_WORD(BTN_TRIGGER_HAPPY)] = BIT_MASK(BTN_TRIGGER_HAPPY) },
+		.bustype = BUS_USB,
+	},
 	{ }	/* Terminating entry */
 };
 
@@ -952,13 +976,13 @@ MODULE_DEVICE_TABLE(input, joydev_ids);
 
 static struct input_handler joydev_handler = {
 	.event		= joydev_event,
+	.match		= joydev_match,
 	.connect	= joydev_connect,
 	.disconnect	= joydev_disconnect,
 	.fops		= &joydev_fops,
 	.minor		= JOYDEV_MINOR_BASE,
 	.name		= "joydev",
 	.id_table	= joydev_ids,
-	.blacklist	= joydev_blacklist,
 };
 
 static int __init joydev_init(void)

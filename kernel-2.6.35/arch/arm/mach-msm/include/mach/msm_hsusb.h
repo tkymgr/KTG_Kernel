@@ -48,6 +48,7 @@
 #define PHY_ID_A		0x90
 
 #define phy_id_state(ints)	((ints) & PHY_ID_MASK)
+#define phy_id_state_gnd(ints)	(phy_id_state((ints)) == PHY_ID_GND)
 #define phy_id_state_a(ints)	(phy_id_state((ints)) == PHY_ID_A)
 #define phy_id_state_b(ints)	(phy_id_state((ints)) == PHY_ID_B)
 #define phy_id_state_c(ints)	(phy_id_state((ints)) == PHY_ID_C)
@@ -65,6 +66,11 @@ enum otg_mode {
 	OTG_VCHG,     		/* Based on VCHG interrupt */
 };
 
+/* used to configure the default mode,if otg_mode is USER_CONTROL */
+enum usb_mode {
+	USB_HOST_MODE,
+	USB_PERIPHERAL_MODE,
+};
 struct usb_function_map {
 	char name[20];
 	unsigned bit_pos;
@@ -117,6 +123,8 @@ enum hs_drv_amplitude {
 	HS_DRV_AMPLITUDE_75_PERCENT = (3 << 2),
 };
 
+#define HS_DRV_SLOPE_DEFAULT	(-1)
+
 /* used to configure the analog switch to select b/w host and peripheral */
 enum usb_switch_control {
 	USB_SWITCH_PERIPHERAL = 0,	/* Configure switch in peripheral mode*/
@@ -162,6 +170,7 @@ struct msm_otg_platform_data {
 	int (*phy_reset)(void __iomem *);
 	unsigned int core_clk;
 	int pmic_vbus_irq;
+	int pmic_id_irq;
 	/* if usb link is in sps there is no need for
 	 * usb pclk as dayatona fabric clock will be
 	 * used instead
@@ -171,8 +180,17 @@ struct msm_otg_platform_data {
 	enum cdr_auto_reset	cdr_autoreset;
 	enum hs_drv_amplitude	drv_ampl;
 	enum se1_gate_state	se1_gating;
+	int			hsdrvslope;
 	int			phy_reset_sig_inverted;
 	int			phy_can_powercollapse;
+	int			pclk_required_during_lpm;
+
+	/* HSUSB core in 8660 has the capability to gate the
+	 * pclk when not being used. Though this feature is
+	 * now being disabled because of H/w issues
+	 */
+	int			pclk_is_hw_gated;
+	char			*pclk_src_name;
 
 	int (*ldo_init) (int init);
 	int (*ldo_enable) (int enable);
@@ -184,16 +202,22 @@ struct msm_otg_platform_data {
 	int (*pmic_register_vbus_sn) (void (*callback)(int online));
 	void (*pmic_unregister_vbus_sn) (void (*callback)(int online));
 	int (*pmic_enable_ldo) (int);
+	int (*init_gpio)(int on);
 	void (*setup_gpio)(enum usb_switch_control mode);
 	u8      otg_mode;
+	u8	usb_mode;
 	void (*vbus_power) (unsigned phy_info, int on);
 
 	/* charger notification apis */
 	void (*chg_connected)(enum chg_type chg_type);
 	void (*chg_vbus_draw)(unsigned ma);
 	int  (*chg_init)(int init);
+	int (*is_cradle_connected)(void);
+	int (*config_vddcx)(int high);
+	int (*init_vddcx)(int init);
 	int  (*chg_is_initialized)(void);
-
+	struct pm_qos_request_list *pm_qos_req_dma;
+	struct pm_qos_request_list *pm_qos_req_bus;
 	unsigned vbus_drawable_ida;
 };
 
