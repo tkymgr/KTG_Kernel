@@ -4,7 +4,7 @@
  *
  *  Copyright (C) 2002-2003  Maxim Krasnyansky <maxk@qualcomm.com>
  *  Copyright (C) 2004-2005  Marcel Holtmann <marcel@holtmann.org>
- *  Copyright (c) 2000-2001, 2010, Code Aurora Forum. All rights reserved.
+ *  Copyright (c) 2000-2001, 2010-2011, Code Aurora Forum. All rights reserved.
  *
  *
  *  This program is free software; you can redistribute it and/or modify
@@ -210,11 +210,10 @@ static int hci_uart_close(struct hci_dev *hdev)
 static int hci_uart_send_frame(struct sk_buff *skb)
 {
 	struct hci_dev* hdev = (struct hci_dev *) skb->dev;
-	struct tty_struct *tty;
 	struct hci_uart *hu;
 
 	if (!hdev) {
-		BT_ERR("Frame for uknown device (hdev=NULL)");
+		BT_ERR("Frame for unknown device (hdev=NULL)");
 		return -ENODEV;
 	}
 
@@ -222,7 +221,6 @@ static int hci_uart_send_frame(struct sk_buff *skb)
 		return -EBUSY;
 
 	hu = (struct hci_uart *) hdev->driver_data;
-	tty = hu->tty;
 
 	BT_DBG("%s: type %d len %d", hdev->name, bt_cb(skb)->pkt_type, skb->len);
 
@@ -390,7 +388,7 @@ static int hci_uart_register_dev(struct hci_uart *hu)
 
 	hu->hdev = hdev;
 
-	hdev->type = HCI_UART;
+	hdev->bus = HCI_UART;
 	hdev->driver_data = hu;
 
 	hdev->open  = hci_uart_open;
@@ -403,6 +401,9 @@ static int hci_uart_register_dev(struct hci_uart *hu)
 
 	if (!reset)
 		set_bit(HCI_QUIRK_NO_RESET, &hdev->quirks);
+
+	if (test_bit(HCI_UART_RAW_DEVICE, &hu->hdev_flags))
+		set_bit(HCI_QUIRK_RAW_DEVICE, &hdev->quirks);
 
 	if (hci_register_dev(hdev) < 0) {
 		BT_ERR("Can't register HCI device");
@@ -464,11 +465,18 @@ static int hci_uart_tty_ioctl(struct tty_struct *tty, struct file * file,
 
 	switch (cmd) {
 	case HCIUARTSETPROTO:
-		if (!test_and_set_bit(HCI_UART_PROTO_SET, &hu->flags)) {
+		if (!test_and_set_bit(HCI_UART_PROTO_SET_IN_PROGRESS,
+			&hu->flags) && !test_bit(HCI_UART_PROTO_SET,
+				&hu->flags)) {
 			err = hci_uart_set_proto(hu, arg);
 			if (err) {
-				clear_bit(HCI_UART_PROTO_SET, &hu->flags);
+				clear_bit(HCI_UART_PROTO_SET_IN_PROGRESS,
+						&hu->flags);
 				return err;
+			} else {
+				set_bit(HCI_UART_PROTO_SET, &hu->flags);
+				clear_bit(HCI_UART_PROTO_SET_IN_PROGRESS,
+						&hu->flags);
 			}
 		} else
 			return -EBUSY;
@@ -483,6 +491,15 @@ static int hci_uart_tty_ioctl(struct tty_struct *tty, struct file * file,
 		if (test_bit(HCI_UART_PROTO_SET, &hu->flags))
 			return hu->hdev->id;
 		return -EUNATCH;
+
+	case HCIUARTSETFLAGS:
+		if (test_bit(HCI_UART_PROTO_SET, &hu->flags))
+			return -EBUSY;
+		hu->hdev_flags = arg;
+		break;
+
+	case HCIUARTGETFLAGS:
+		return hu->hdev_flags;
 
 	default:
 		err = n_tty_ioctl_helper(tty, file, cmd, arg);
@@ -552,6 +569,9 @@ static int __init hci_uart_init(void)
 #ifdef CONFIG_BT_HCIUART_IBS
 	ibs_init();
 #endif
+#ifdef CONFIG_BT_HCIUART_ATH3K
+	ath_init();
+#endif
 
 	return 0;
 }
@@ -571,6 +591,9 @@ static void __exit hci_uart_exit(void)
 #endif
 #ifdef CONFIG_BT_HCIUART_IBS
 	ibs_deinit();
+#endif
+#ifdef CONFIG_BT_HCIUART_ATH3K
+	ath_deinit();
 #endif
 
 	/* Release tty registration of line discipline */

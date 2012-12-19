@@ -196,7 +196,7 @@ enum {
  *    All other            Exact length of attribute payload
  *
  * Example:
- * static struct nla_policy my_policy[ATTR_MAX+1] __read_mostly = {
+ * static const struct nla_policy my_policy[ATTR_MAX+1] = {
  * 	[ATTR_FOO] = { .type = NLA_U16 },
  *	[ATTR_BAR] = { .type = NLA_STRING, .len = BARSIZ },
  *	[ATTR_BAZ] = { .len = sizeof(struct mystruct) },
@@ -384,7 +384,7 @@ static inline int nlmsg_parse(const struct nlmsghdr *nlh, int hdrlen,
  *
  * Returns the first attribute which matches the specified type.
  */
-static inline struct nlattr *nlmsg_find_attr(const struct nlmsghdr *nlh,
+static inline struct nlattr *nlmsg_find_attr(struct nlmsghdr *nlh,
 					     int hdrlen, int attrtype)
 {
 	return nla_find(nlmsg_attrdata(nlh, hdrlen),
@@ -945,7 +945,11 @@ static inline u64 nla_get_u64(const struct nlattr *nla)
  */
 static inline __be64 nla_get_be64(const struct nlattr *nla)
 {
-	return *(__be64 *) nla_data(nla);
+	__be64 tmp;
+
+	nla_memcpy(&tmp, nla, sizeof(tmp));
+
+	return tmp;
 }
 
 /**

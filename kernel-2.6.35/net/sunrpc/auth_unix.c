@@ -6,6 +6,7 @@
  * Copyright (C) 1996, Olaf Kirch <okir@monad.swb.de>
  */
 
+#include <linux/slab.h>
 #include <linux/types.h>
 #include <linux/sched.h>
 #include <linux/module.h>
@@ -129,9 +130,6 @@ unx_match(struct auth_cred *acred, struct rpc_cred *rcred, int flags)
 	for (i = 0; i < groups ; i++)
 		if (cred->uc_gids[i] != GROUP_AT(acred->group_info, i))
 			return 0;
-	if (groups < NFS_NGROUPS &&
-	    cred->uc_gids[groups] != NOGROUP)
-		return 0;
 	return 1;
 }
 

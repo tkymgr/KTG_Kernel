@@ -1,6 +1,6 @@
 /*
    BlueZ - Bluetooth protocol stack for Linux
-   Copyright (c) 2000-2001, 2010, Code Aurora Forum. All rights reserved.
+   Copyright (c) 2000-2001, 2010-2011, Code Aurora Forum. All rights reserved.
 
    Written 2000,2001 by Maxim Krasnyansky <maxk@qualcomm.com>
 
@@ -75,6 +75,31 @@ static void hci_cc_exit_periodic_inq(struct hci_dev *hdev, struct sk_buff *skb)
 	clear_bit(HCI_INQUIRY, &hdev->flags);
 
 	hci_conn_check_pending(hdev);
+}
+
+static void hci_cc_link_key_reply(struct hci_dev *hdev, struct sk_buff *skb)
+{
+	struct hci_rp_link_key_reply *rp = (void *) skb->data;
+	struct hci_conn *conn;
+	struct hci_cp_link_key_reply *cp;
+
+	BT_DBG("%s status 0x%x", hdev->name, rp->status);
+	if (rp->status)
+		return;
+
+	cp = hci_sent_cmd_data(hdev, HCI_OP_LINK_KEY_REPLY);
+	if (!cp)
+		return;
+
+	hci_dev_lock(hdev);
+	conn = hci_conn_hash_lookup_ba(hdev, ACL_LINK, &cp->bdaddr);
+	if (conn) {
+		hci_conn_hold(conn);
+		memcpy(conn->link_key, cp->link_key, sizeof(conn->link_key));
+		conn->key_type = 5;
+		hci_conn_put(conn);
+	}
+	hci_dev_unlock(hdev);
 }
 
 static void hci_cc_remote_name_req_cancel(struct hci_dev *hdev, struct sk_buff *skb)
@@ -500,6 +525,19 @@ static void hci_cc_read_local_features(struct hci_dev *hdev, struct sk_buff *skb
 					hdev->features[6], hdev->features[7]);
 }
 
+static void hci_cc_read_flow_control_mode(struct hci_dev *hdev,
+					struct sk_buff *skb)
+{
+	struct hci_rp_read_flow_control_mode *rp = (void *) skb->data;
+
+	BT_DBG("%s status 0x%x", hdev->name, rp->status);
+
+	if (rp->status)
+		return;
+
+	hdev->flow_ctl_mode = rp->mode;
+}
+
 static void hci_cc_read_buffer_size(struct hci_dev *hdev, struct sk_buff *skb)
 {
 	struct hci_rp_read_buffer_size *rp = (void *) skb->data;
@@ -509,18 +547,20 @@ static void hci_cc_read_buffer_size(struct hci_dev *hdev, struct sk_buff *skb)
 	if (rp->status)
 		return;
 
-	hdev->acl_mtu  = __le16_to_cpu(rp->acl_mtu);
-	hdev->sco_mtu  = rp->sco_mtu;
-	hdev->acl_pkts = __le16_to_cpu(rp->acl_max_pkt);
-	hdev->sco_pkts = __le16_to_cpu(rp->sco_max_pkt);
+	if (hdev->flow_ctl_mode == HCI_PACKET_BASED_FLOW_CTL_MODE) {
+		hdev->acl_mtu  = __le16_to_cpu(rp->acl_mtu);
+		hdev->sco_mtu  = rp->sco_mtu;
+		hdev->acl_pkts = __le16_to_cpu(rp->acl_max_pkt);
+		hdev->sco_pkts = __le16_to_cpu(rp->sco_max_pkt);
+		hdev->acl_cnt = hdev->acl_pkts;
+		hdev->sco_cnt = hdev->sco_pkts;
+	}
 
 	if (test_bit(HCI_QUIRK_FIXUP_BUFFER_SIZE, &hdev->quirks)) {
 		hdev->sco_mtu  = 64;
 		hdev->sco_pkts = 8;
 	}
 
-	hdev->acl_cnt = hdev->acl_pkts;
-	hdev->sco_cnt = hdev->sco_pkts;
 
 	BT_DBG("%s acl mtu %d:%d sco mtu %d:%d", hdev->name,
 					hdev->acl_mtu, hdev->acl_pkts,
@@ -535,6 +575,55 @@ static void hci_cc_read_bd_addr(struct hci_dev *hdev, struct sk_buff *skb)
 
 	if (!rp->status)
 		bacpy(&hdev->bdaddr, &rp->bdaddr);
+
+	hci_req_complete(hdev, rp->status);
+}
+
+static void hci_cc_read_data_block_size(struct hci_dev *hdev,
+					struct sk_buff *skb)
+{
+	struct hci_rp_read_data_block_size *rp = (void *) skb->data;
+
+	BT_DBG("%s status 0x%x", hdev->name, rp->status);
+
+	if (rp->status)
+		return;
+
+	if (hdev->flow_ctl_mode == HCI_BLOCK_BASED_FLOW_CTL_MODE) {
+		hdev->acl_mtu  = __le16_to_cpu(rp->max_acl_len);
+		hdev->sco_mtu = 0;
+		hdev->data_block_len = __le16_to_cpu(rp->data_block_len);
+		/* acl_pkts indicates the number of blocks */
+		hdev->acl_pkts = __le16_to_cpu(rp->num_blocks);
+		hdev->sco_pkts = 0;
+		hdev->acl_cnt = hdev->acl_pkts;
+		hdev->sco_cnt = 0;
+	}
+
+	BT_DBG("%s acl mtu %d:%d, data block len %d", hdev->name,
+			hdev->acl_mtu, hdev->acl_cnt, hdev->data_block_len);
+}
+
+static void hci_cc_read_local_amp_info(struct hci_dev *hdev,
+				struct sk_buff *skb)
+{
+	struct hci_rp_read_local_amp_info *rp = (void *) skb->data;
+
+	BT_DBG("%s status 0x%x", hdev->name, rp->status);
+
+	if (rp->status)
+		return;
+
+	hdev->amp_status = rp->amp_status;
+	hdev->amp_total_bw = __le32_to_cpu(rp->total_bw);
+	hdev->amp_max_bw = __le32_to_cpu(rp->max_bw);
+	hdev->amp_min_latency = __le32_to_cpu(rp->min_latency);
+	hdev->amp_max_pdu = __le32_to_cpu(rp->max_pdu);
+	hdev->amp_type = rp->amp_type;
+	hdev->amp_pal_cap = __le16_to_cpu(rp->pal_cap);
+	hdev->amp_assoc_size = __le16_to_cpu(rp->max_assoc_size);
+	hdev->amp_be_flush_to = __le32_to_cpu(rp->be_flush_to);
+	hdev->amp_max_flush_to = __le32_to_cpu(rp->max_flush_to);
 
 	hci_req_complete(hdev, rp->status);
 }
@@ -584,7 +673,7 @@ static inline void hci_cs_create_conn(struct hci_dev *hdev, __u8 status)
 				conn->out = 1;
 				conn->link_mode |= HCI_LM_MASTER;
 			} else
-				BT_ERR("No memmory for new connection");
+				BT_ERR("No memory for new connection");
 		}
 	}
 
@@ -615,7 +704,6 @@ static void hci_cs_add_sco(struct hci_dev *hdev, __u8 status)
 	acl = hci_conn_hash_lookup_handle(hdev, handle);
 	if (acl && (sco = acl->link)) {
 		sco->state = BT_CLOSED;
-		clear_bit(HCI_CONN_SCO_PEND, &sco->pend);
 
 		hci_proto_connect_cfm(sco, status);
 		hci_conn_del(sco);
@@ -761,7 +849,6 @@ static void hci_cs_setup_sync_conn(struct hci_dev *hdev, __u8 status)
 	acl = hci_conn_hash_lookup_handle(hdev, handle);
 	if (acl && (sco = acl->link)) {
 		sco->state = BT_CLOSED;
-		clear_bit(HCI_CONN_SCO_PEND, &sco->pend);
 
 		hci_proto_connect_cfm(sco, status);
 		hci_conn_del(sco);
@@ -787,8 +874,12 @@ static void hci_cs_sniff_mode(struct hci_dev *hdev, __u8 status)
 	hci_dev_lock(hdev);
 
 	conn = hci_conn_hash_lookup_handle(hdev, __le16_to_cpu(cp->handle));
-	if (conn)
+	if (conn) {
 		clear_bit(HCI_CONN_MODE_CHANGE_PEND, &conn->pend);
+
+		if (test_and_clear_bit(HCI_CONN_SCO_SETUP_PEND, &conn->pend))
+			hci_sco_setup(conn, status);
+	}
 
 	hci_dev_unlock(hdev);
 }
@@ -797,7 +888,6 @@ static void hci_cs_exit_sniff_mode(struct hci_dev *hdev, __u8 status)
 {
 	struct hci_cp_exit_sniff_mode *cp;
 	struct hci_conn *conn;
-	struct hci_conn *sco;
 
 	BT_DBG("%s status 0x%x", hdev->name, status);
 
@@ -814,13 +904,114 @@ static void hci_cs_exit_sniff_mode(struct hci_dev *hdev, __u8 status)
 	if (conn) {
 		clear_bit(HCI_CONN_MODE_CHANGE_PEND, &conn->pend);
 
-		sco = conn->link;
-		if (sco) {
-			if (test_and_clear_bit(HCI_CONN_SCO_PEND, &sco->pend)) {
-				hci_proto_connect_cfm(sco, status);
-				hci_conn_del(sco);
-			}
+		if (test_and_clear_bit(HCI_CONN_SCO_SETUP_PEND, &conn->pend))
+			hci_sco_setup(conn, status);
+	}
+
+	hci_dev_unlock(hdev);
+}
+
+static void hci_cs_accept_logical_link(struct hci_dev *hdev, __u8 status)
+{
+	struct hci_cp_create_logical_link *ap;
+	struct hci_chan *chan;
+
+	BT_DBG("%s status 0x%x", hdev->name, status);
+
+	ap = hci_sent_cmd_data(hdev, HCI_OP_ACCEPT_LOGICAL_LINK);
+	if (!ap)
+		return;
+
+	hci_dev_lock(hdev);
+
+	chan = hci_chan_list_lookup_id(hdev, ap->phy_handle);
+
+	BT_DBG("%s chan %p", hdev->name, chan);
+
+	if (status) {
+		if (chan && chan->state == BT_CONNECT) {
+			chan->state = BT_CLOSED;
+			hci_proto_create_cfm(chan, status);
+			hci_chan_del(chan);
 		}
+	} else if (chan)
+			chan->state = BT_CONNECT2;
+
+	hci_dev_unlock(hdev);
+}
+
+static void hci_cs_create_logical_link(struct hci_dev *hdev, __u8 status)
+{
+	struct hci_cp_create_logical_link *cp;
+	struct hci_chan *chan;
+
+	BT_DBG("%s status 0x%x", hdev->name, status);
+
+	cp = hci_sent_cmd_data(hdev, HCI_OP_CREATE_LOGICAL_LINK);
+	if (!cp)
+		return;
+
+	hci_dev_lock(hdev);
+
+	chan = hci_chan_list_lookup_id(hdev, cp->phy_handle);
+
+	BT_DBG("%s chan %p", hdev->name, chan);
+
+	if (status) {
+		if (chan && chan->state == BT_CONNECT) {
+			chan->state = BT_CLOSED;
+			hci_proto_create_cfm(chan, status);
+			hci_chan_del(chan);
+		}
+	} else if (chan)
+			chan->state = BT_CONNECT2;
+
+	hci_dev_unlock(hdev);
+}
+
+static void hci_cs_disconn_logical_link(struct hci_dev *hdev, __u8 status)
+{
+	struct hci_cp_disconn_logical_link *cp;
+	struct hci_chan *chan;
+
+	if (!status)
+		return;
+
+	BT_DBG("%s status 0x%x", hdev->name, status);
+
+	cp = hci_sent_cmd_data(hdev, HCI_OP_DISCONN_LOGICAL_LINK);
+	if (!cp)
+		return;
+
+	hci_dev_lock(hdev);
+
+	chan = hci_chan_list_lookup_handle(hdev, cp->log_handle);
+	if (chan)
+		hci_chan_del(chan);
+
+	hci_dev_unlock(hdev);
+}
+
+static void hci_cs_disconn_physical_link(struct hci_dev *hdev, __u8 status)
+{
+	struct hci_cp_disconn_phys_link *cp;
+	struct hci_conn *conn;
+
+	if (!status)
+		return;
+
+	BT_DBG("%s status 0x%x", hdev->name, status);
+
+	cp = hci_sent_cmd_data(hdev, HCI_OP_DISCONN_PHYS_LINK);
+	if (!cp)
+		return;
+
+	hci_dev_lock(hdev);
+
+	conn = hci_conn_hash_lookup_handle(hdev, cp->phy_handle);
+	if (conn) {
+		conn->state = BT_CLOSED;
+		hci_conn_del(conn);
 	}
 
 	hci_dev_unlock(hdev);
@@ -927,20 +1118,8 @@ static inline void hci_conn_complete_evt(struct hci_dev *hdev, struct sk_buff *s
 	} else
 		conn->state = BT_CLOSED;
 
-	if (conn->type == ACL_LINK) {
-		struct hci_conn *sco = conn->link;
-		if (sco) {
-			if (!ev->status) {
-				if (lmp_esco_capable(hdev))
-					hci_setup_sync(sco, conn->handle);
-				else
-					hci_add_sco(sco, conn->handle);
-			} else {
-				hci_proto_connect_cfm(sco, ev->status);
-				hci_conn_del(sco);
-			}
-		}
-	}
+	if (conn->type == ACL_LINK)
+		hci_sco_setup(conn, ev->status);
 
 	if (ev->status) {
 		hci_proto_connect_cfm(conn, ev->status);
@@ -964,7 +1143,7 @@ static inline void hci_conn_request_evt(struct hci_dev *hdev, struct sk_buff *sk
 
 	mask |= hci_proto_connect_ind(hdev, &ev->bdaddr, ev->link_type);
 
-	if (mask & HCI_LM_ACCEPT) {
+	if ((mask & HCI_LM_ACCEPT) && !hci_blacklist_lookup(hdev, &ev->bdaddr)) {
 		/* Connection accepted */
 		struct inquiry_entry *ie;
 		struct hci_conn *conn;
@@ -979,7 +1158,7 @@ static inline void hci_conn_request_evt(struct hci_dev *hdev, struct sk_buff *sk
 			/* pkt_type not yet used for incoming connections */
 			if (!(conn = hci_conn_add(hdev, ev->link_type, 0,
 							&ev->bdaddr))) {
-				BT_ERR("No memmory for new connection");
+				BT_ERR("No memory for new connection");
 				hci_dev_unlock(hdev);
 				return;
 			}
@@ -1061,8 +1240,21 @@ static inline void hci_auth_complete_evt(struct hci_dev *hdev, struct sk_buff *s
 
 	conn = hci_conn_hash_lookup_handle(hdev, __le16_to_cpu(ev->handle));
 	if (conn) {
+		if (ev->status == 0x06 && hdev->ssp_mode > 0 &&
+							conn->ssp_mode > 0) {
+			struct hci_cp_auth_requested cp;
+			cp.handle = cpu_to_le16(conn->handle);
+			hci_send_cmd(conn->hdev, HCI_OP_AUTH_REQUESTED,
+							sizeof(cp), &cp);
+			hci_dev_unlock(hdev);
+			BT_INFO("Pin or key missing");
+			return;
+		}
+
 		if (!ev->status)
 			conn->link_mode |= HCI_LM_AUTH;
+		else
+			conn->sec_level = BT_SECURITY_LOW;
 
 		clear_bit(HCI_CONN_AUTH_PEND, &conn->pend);
 
@@ -1192,16 +1384,6 @@ static inline void hci_remote_features_evt(struct hci_dev *hdev, struct sk_buff 
 					HCI_OP_READ_REMOTE_EXT_FEATURES,
 							sizeof(cp), &cp);
 			} else {
-				if (!ev->status) {
-					struct hci_cp_remote_name_req cp;
-					memset(&cp, 0, sizeof(cp));
-					bacpy(&cp.bdaddr, &conn->dst);
-					cp.pscan_rep_mode = 0x02;
-					hci_send_cmd(hdev,
-							HCI_OP_REMOTE_NAME_REQ,
-							sizeof(cp), &cp);
-				}
-
 				conn->state = BT_CONNECTED;
 				hci_proto_connect_cfm(conn, ev->status);
 				hci_conn_put(conn);
@@ -1238,6 +1420,10 @@ static inline void hci_cmd_complete_evt(struct hci_dev *hdev, struct sk_buff *sk
 
 	case HCI_OP_EXIT_PERIODIC_INQ:
 		hci_cc_exit_periodic_inq(hdev, skb);
+		break;
+
+	case HCI_OP_LINK_KEY_REPLY:
+		hci_cc_link_key_reply(hdev, skb);
 		break;
 
 	case HCI_OP_REMOTE_NAME_REQ_CANCEL:
@@ -1336,6 +1522,23 @@ static inline void hci_cmd_complete_evt(struct hci_dev *hdev, struct sk_buff *sk
 		hci_cc_read_bd_addr(hdev, skb);
 		break;
 
+	case HCI_OP_READ_FLOW_CONTROL_MODE:
+		hci_cc_read_flow_control_mode(hdev, skb);
+		break;
+
+	case HCI_OP_READ_DATA_BLOCK_SIZE:
+		hci_cc_read_data_block_size(hdev, skb);
+		break;
+
+	case HCI_OP_READ_LOCAL_AMP_INFO:
+		hci_cc_read_local_amp_info(hdev, skb);
+		break;
+
+	case HCI_OP_READ_LOCAL_AMP_ASSOC:
+	case HCI_OP_WRITE_REMOTE_AMP_ASSOC:
+		hci_amp_cmd_complete(hdev, opcode, skb);
+		break;
+
 	default:
 		BT_DBG("%s opcode 0x%x", hdev->name, opcode);
 		break;
@@ -1344,7 +1547,7 @@ static inline void hci_cmd_complete_evt(struct hci_dev *hdev, struct sk_buff *sk
 	if (ev->ncmd) {
 		atomic_set(&hdev->cmd_cnt, 1);
 		if (!skb_queue_empty(&hdev->cmd_q))
-			hci_sched_cmd(hdev);
+			tasklet_schedule(&hdev->cmd_task);
 	}
 }
 
@@ -1402,6 +1605,27 @@ static inline void hci_cmd_status_evt(struct hci_dev *hdev, struct sk_buff *skb)
 		hci_cs_exit_sniff_mode(hdev, ev->status);
 		break;
 
+	case HCI_OP_CREATE_LOGICAL_LINK:
+		hci_cs_create_logical_link(hdev, ev->status);
+		break;
+
+	case HCI_OP_ACCEPT_LOGICAL_LINK:
+		hci_cs_accept_logical_link(hdev, ev->status);
+		break;
+
+	case HCI_OP_DISCONN_LOGICAL_LINK:
+		hci_cs_disconn_logical_link(hdev, ev->status);
+		break;
+
+	case HCI_OP_CREATE_PHYS_LINK:
+	case HCI_OP_ACCEPT_PHYS_LINK:
+		hci_amp_cmd_status(hdev, opcode, ev->status);
+		break;
+
+	case HCI_OP_DISCONN_PHYS_LINK:
+		hci_cs_disconn_physical_link(hdev, ev->status);
+		break;
+
 	default:
 		BT_DBG("%s opcode 0x%x", hdev->name, opcode);
 		break;
@@ -1410,7 +1634,7 @@ static inline void hci_cmd_status_evt(struct hci_dev *hdev, struct sk_buff *skb)
 	if (ev->ncmd) {
 		atomic_set(&hdev->cmd_cnt, 1);
 		if (!skb_queue_empty(&hdev->cmd_q))
-			hci_sched_cmd(hdev);
+			tasklet_schedule(&hdev->cmd_task);
 	}
 }
 
@@ -1458,13 +1682,20 @@ static inline void hci_num_comp_pkts_evt(struct hci_dev *hdev, struct sk_buff *s
 	tasklet_disable(&hdev->tx_task);
 
 	for (i = 0, ptr = (__le16 *) skb->data; i < ev->num_hndl; i++) {
-		struct hci_conn *conn;
+		struct hci_conn *conn = NULL;
+		struct hci_chan *chan;
 		__u16  handle, count;
 
 		handle = get_unaligned_le16(ptr++);
 		count  = get_unaligned_le16(ptr++);
 
-		conn = hci_conn_hash_lookup_handle(hdev, handle);
+		if (hdev->dev_type == HCI_BREDR)
+			conn = hci_conn_hash_lookup_handle(hdev, handle);
+		else {
+			chan = hci_chan_list_lookup_handle(hdev, handle);
+			if (chan)
+				conn = chan->conn;
+		}
 		if (conn) {
 			conn->sent -= count;
 
@@ -1478,7 +1709,69 @@ static inline void hci_num_comp_pkts_evt(struct hci_dev *hdev, struct sk_buff *s
 		}
 	}
 
-	hci_sched_tx(hdev);
+	tasklet_schedule(&hdev->tx_task);
+
+	tasklet_enable(&hdev->tx_task);
+}
+
+static inline void hci_num_comp_blocks_evt(struct hci_dev *hdev,
+					struct sk_buff *skb)
+{
+	struct hci_ev_num_comp_blocks *ev = (void *) skb->data;
+	__le16 *ptr;
+	int i;
+
+	skb_pull(skb, sizeof(*ev));
+
+	BT_DBG("%s total_num_blocks %d num_hndl %d",
+		hdev->name, ev->total_num_blocks, ev->num_hndl);
+
+	if (skb->len < ev->num_hndl * 6) {
+		BT_DBG("%s bad parameters", hdev->name);
+		return;
+	}
+
+	tasklet_disable(&hdev->tx_task);
+
+	for (i = 0, ptr = (__le16 *) skb->data; i < ev->num_hndl; i++) {
+		struct hci_conn *conn = NULL;
+		struct hci_chan *chan;
+		__u16  handle, block_count;
+
+		handle = get_unaligned_le16(ptr++);
+
+		/* Skip packet count */
+		ptr++;
+		block_count  = get_unaligned_le16(ptr++);
+
+		BT_DBG("%s handle %d count %d", hdev->name, handle,
+			block_count);
+
+		if (hdev->dev_type == HCI_BREDR)
+			conn = hci_conn_hash_lookup_handle(hdev, handle);
+		else {
+			chan = hci_chan_list_lookup_handle(hdev, handle);
+			if (chan)
+				conn = chan->conn;
+		}
+		if (conn) {
+			BT_DBG("%s conn %p sent %d", hdev->name,
+				conn, conn->sent);
+
+			conn->sent -= block_count;
+
+			if (conn->type == ACL_LINK) {
+				hdev->acl_cnt += block_count;
+				if (hdev->acl_cnt > hdev->acl_pkts)
+					hdev->acl_cnt = hdev->acl_pkts;
+			} else {
+				/* We should not find ourselves here */
+				BT_DBG("Unexpected event for SCO connection");
+			}
+		}
+	}
+
+	tasklet_schedule(&hdev->tx_task);
 
 	tasklet_enable(&hdev->tx_task);
 }
@@ -1487,7 +1780,6 @@ static inline void hci_mode_change_evt(struct hci_dev *hdev, struct sk_buff *skb
 {
 	struct hci_ev_mode_change *ev = (void *) skb->data;
 	struct hci_conn *conn;
-	struct hci_conn *sco;
 
 	BT_DBG("%s status %d", hdev->name, ev->status);
 
@@ -1503,16 +1795,10 @@ static inline void hci_mode_change_evt(struct hci_dev *hdev, struct sk_buff *skb
 				conn->power_save = 1;
 			else
 				conn->power_save = 0;
-		} else {
-			sco = conn->link;
-			if (sco && test_and_clear_bit(HCI_CONN_SCO_PEND,
-					&sco->pend)) {
-				if (lmp_esco_capable(hdev))
-					hci_setup_sync(sco, conn->handle);
-				else
-					hci_add_sco(sco, conn->handle);
-			}
 		}
+
+		if (test_and_clear_bit(HCI_CONN_SCO_SETUP_PEND, &conn->pend))
+			hci_sco_setup(conn, ev->status);
 	}
 
 	hci_dev_unlock(hdev);
@@ -1547,7 +1833,7 @@ static inline void hci_link_key_notify_evt(struct hci_dev *hdev, struct sk_buff 
 	struct hci_ev_link_key_notify *ev = (void *) skb->data;
 	struct hci_conn *conn;
 
-	BT_DBG("%s", hdev->name);
+	BT_DBG("%s type %d", hdev->name, ev->key_type);
 
 	hci_dev_lock(hdev);
 
@@ -1555,6 +1841,9 @@ static inline void hci_link_key_notify_evt(struct hci_dev *hdev, struct sk_buff 
 	if (conn) {
 		hci_conn_hold(conn);
 		conn->disc_timeout = HCI_DISCONN_TIMEOUT;
+		memcpy(conn->link_key, ev->link_key, 16);
+		conn->key_type = ev->key_type;
+		hci_disconnect_amp(conn, 0x06);
 		hci_conn_put(conn);
 	}
 
@@ -1684,15 +1973,6 @@ static inline void hci_remote_ext_features_evt(struct hci_dev *hdev, struct sk_b
 		}
 
 		if (conn->state == BT_CONFIG) {
-			if (!ev->status) {
-				struct hci_cp_remote_name_req cp;
-				memset(&cp, 0, sizeof(cp));
-				bacpy(&cp.bdaddr, &conn->dst);
-				cp.pscan_rep_mode = 0x02;
-				hci_send_cmd(hdev, HCI_OP_REMOTE_NAME_REQ,
-							sizeof(cp), &cp);
-			}
-
 			if (!ev->status && hdev->ssp_mode > 0 &&
 					conn->ssp_mode > 0 && conn->out &&
 					conn->sec_level != BT_SECURITY_SDP) {
@@ -1741,10 +2021,9 @@ static inline void hci_sync_conn_complete_evt(struct hci_dev *hdev, struct sk_bu
 		hci_conn_add_sysfs(conn);
 		break;
 
-	case 0x0d:      /* Connection Failed to Complete */
-	case 0x10:	/* Connection Accept Timeout */
+	case 0x11:	/* Unsupported Feature or Parameter Value */
 	case 0x1c:	/* SCO interval rejected */
-	case 0x1a:	/* unsupported feature */
+	case 0x1a:	/* Unsupported Remote Feature */
 	case 0x1f:	/* Unspecified error */
 		if (conn->out && conn->attempt < 2) {
 			conn->pkt_type = (hdev->esco_type & SCO_ESCO_MASK) |
@@ -1860,6 +2139,114 @@ static inline void hci_remote_host_features_evt(struct hci_dev *hdev, struct sk_
 
 	if ((ie = hci_inquiry_cache_lookup(hdev, &ev->bdaddr)))
 		ie->data.ssp_mode = (ev->features[0] & 0x01);
+
+	hci_dev_unlock(hdev);
+}
+
+static inline void hci_phy_link_complete(struct hci_dev *hdev,
+					struct sk_buff *skb)
+{
+	struct hci_ev_phys_link_complete *ev = (void *) skb->data;
+	struct hci_conn *conn;
+
+	BT_DBG("%s handle %d status %d", hdev->name, ev->phy_handle,
+		ev->status);
+
+	hci_dev_lock(hdev);
+
+	if (ev->status == 0) {
+		conn = hci_conn_add(hdev, ACL_LINK, 0, BDADDR_ANY);
+		if (conn) {
+			conn->handle = ev->phy_handle;
+			conn->state = BT_CONNECTED;
+
+			hci_conn_hold(conn);
+			conn->disc_timeout = HCI_DISCONN_TIMEOUT/2;
+			hci_conn_put(conn);
+
+			hci_conn_hold_device(conn);
+			hci_conn_add_sysfs(conn);
+		} else
+			BT_ERR("No memory for new connection");
+	}
+
+	hci_dev_unlock(hdev);
+}
+
+static inline void hci_log_link_complete(struct hci_dev *hdev,
+					struct sk_buff *skb)
+{
+	struct hci_ev_log_link_complete *ev = (void *) skb->data;
+	struct hci_chan *chan;
+
+	BT_DBG("%s handle %d status %d", hdev->name,
+		__le16_to_cpu(ev->log_handle), ev->status);
+
+	hci_dev_lock(hdev);
+
+	chan = hci_chan_list_lookup_id(hdev, ev->phy_handle);
+
+	if (ev->status == 0) {
+		if (chan) {
+			chan->ll_handle = __le16_to_cpu(ev->log_handle);
+			chan->state = BT_CONNECTED;
+			hci_proto_create_cfm(chan, ev->status);
+			hci_chan_hold(chan);
+		}
+	} else {
+		if (chan) {
+			chan->state = BT_CLOSED;
+			hci_proto_create_cfm(chan, ev->status);
+			hci_chan_del(chan);
+		}
+	}
+
+	hci_dev_unlock(hdev);
+}
+
+static inline void hci_disconn_log_link_complete_evt(struct hci_dev *hdev,
+						struct sk_buff *skb)
+{
+	struct hci_ev_disconn_log_link_complete *ev = (void *) skb->data;
+	struct hci_chan *chan;
+
+	BT_DBG("%s handle %d status %d", hdev->name,
+		__le16_to_cpu(ev->log_handle), ev->status);
+
+	if (ev->status)
+		return;
+
+	hci_dev_lock(hdev);
+
+	chan = hci_chan_list_lookup_handle(hdev, __le16_to_cpu(ev->log_handle));
+	if (chan) {
+		hci_proto_destroy_cfm(chan, ev->reason);
+		hci_chan_del(chan);
+	}
+
+	hci_dev_unlock(hdev);
+}
+
+static inline void hci_disconn_phy_link_complete_evt(struct hci_dev *hdev,
+						struct sk_buff *skb)
+{
+	struct hci_ev_disconn_phys_link_complete *ev = (void *) skb->data;
+	struct hci_conn *conn;
+
+	BT_DBG("%s status %d", hdev->name, ev->status);
+
+	if (ev->status)
+		return;
+
+	hci_dev_lock(hdev);
+
+	conn = hci_conn_hash_lookup_handle(hdev, ev->phy_handle);
+	if (conn) {
+		conn->state = BT_CLOSED;
+
+		hci_proto_disconn_cfm(conn, ev->reason);
+		hci_conn_del(conn);
+	}
 
 	hci_dev_unlock(hdev);
 }
@@ -1998,6 +2385,36 @@ void hci_event_packet(struct hci_dev *hdev, struct sk_buff *skb)
 
 	case HCI_EV_REMOTE_HOST_FEATURES:
 		hci_remote_host_features_evt(hdev, skb);
+		break;
+
+	case HCI_EV_PHYS_LINK_COMPLETE:
+		hci_phy_link_complete(hdev, skb);
+		hci_amp_event_packet(hdev, event, skb);
+		break;
+
+	case HCI_EV_LOG_LINK_COMPLETE:
+		hci_log_link_complete(hdev, skb);
+		break;
+
+	case HCI_EV_DISCONN_LOG_LINK_COMPLETE:
+		hci_disconn_log_link_complete_evt(hdev, skb);
+		break;
+
+	case HCI_EV_DISCONN_PHYS_LINK_COMPLETE:
+		hci_disconn_phy_link_complete_evt(hdev, skb);
+		hci_amp_event_packet(hdev, event, skb);
+		break;
+
+	case HCI_EV_NUM_COMP_BLOCKS:
+		hci_num_comp_blocks_evt(hdev, skb);
+		break;
+
+	case HCI_EV_CHANNEL_SELECTED:
+		hci_amp_event_packet(hdev, event, skb);
+		break;
+
+	case HCI_EV_AMP_STATUS_CHANGE:
+		hci_amp_event_packet(hdev, event, skb);
 		break;
 
 	default:

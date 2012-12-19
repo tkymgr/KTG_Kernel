@@ -1,9 +1,3 @@
-/*
- * Copyright (C) 2011 Sony Ericsson Mobile Communications AB.
- *
- * Added for_each_bit() for compatibiliy with old kernel.
- *
- */
 #ifndef _LINUX_BITOPS_H
 #define _LINUX_BITOPS_H
 #include <asm/types.h>
@@ -32,8 +26,6 @@ extern unsigned long __sw_hweight64(__u64 w);
 	     (bit) < (size); \
 	     (bit) = find_next_bit((addr), (size), (bit) + 1))
 
-#define for_each_bit(bit, addr, size) for_each_set_bit(bit, addr, size)
-
 static __inline__ int get_bitmask_order(unsigned int count)
 {
 	int order;
@@ -55,26 +47,6 @@ static __inline__ int get_count_order(unsigned int count)
 static inline unsigned long hweight_long(unsigned long w)
 {
 	return sizeof(w) == 4 ? hweight32(w) : hweight64(w);
-}
-
-/**
- * rol64 - rotate a 64-bit value left
- * @word: value to rotate
- * @shift: bits to roll
- */
-static inline __u64 rol64(__u64 word, unsigned int shift)
-{
-	return (word << shift) | (word >> (64 - shift));
-}
-
-/**
- * ror64 - rotate a 64-bit value right
- * @word: value to rotate
- * @shift: bits to roll
- */
-static inline __u64 ror64(__u64 word, unsigned int shift)
-{
-	return (word >> shift) | (word << (64 - shift));
 }
 
 /**
@@ -137,17 +109,6 @@ static inline __u8 ror8(__u8 word, unsigned int shift)
 	return (word >> shift) | (word << (8 - shift));
 }
 
-/**
- * sign_extend32 - sign extend a 32-bit value using specified bit as sign-bit
- * @value: value to sign extend
- * @index: 0 based bit index (0<=index<32) to sign bit
- */
-static inline __s32 sign_extend32(__u32 value, int index)
-{
-	__u8 shift = 31 - index;
-	return (__s32)(value << shift) >> shift;
-}
-
 static inline unsigned fls_long(unsigned long l)
 {
 	if (sizeof(l) == 4)
@@ -175,8 +136,30 @@ static inline unsigned long __ffs64(u64 word)
 }
 
 #ifdef __KERNEL__
+#ifdef CONFIG_GENERIC_FIND_FIRST_BIT
 
-#ifndef find_last_bit
+/**
+ * find_first_bit - find the first set bit in a memory region
+ * @addr: The address to start the search at
+ * @size: The maximum size to search
+ *
+ * Returns the bit number of the first set bit.
+ */
+extern unsigned long find_first_bit(const unsigned long *addr,
+				    unsigned long size);
+
+/**
+ * find_first_zero_bit - find the first cleared bit in a memory region
+ * @addr: The address to start the search at
+ * @size: The maximum size to search
+ *
+ * Returns the bit number of the first cleared bit.
+ */
+extern unsigned long find_first_zero_bit(const unsigned long *addr,
+					 unsigned long size);
+#endif /* CONFIG_GENERIC_FIND_FIRST_BIT */
+
+#ifdef CONFIG_GENERIC_FIND_LAST_BIT
 /**
  * find_last_bit - find the last set bit in a memory region
  * @addr: The address to start the search at
@@ -186,7 +169,30 @@ static inline unsigned long __ffs64(u64 word)
  */
 extern unsigned long find_last_bit(const unsigned long *addr,
 				   unsigned long size);
-#endif
+#endif /* CONFIG_GENERIC_FIND_LAST_BIT */
 
+#ifdef CONFIG_GENERIC_FIND_NEXT_BIT
+
+/**
+ * find_next_bit - find the next set bit in a memory region
+ * @addr: The address to base the search on
+ * @offset: The bitnumber to start searching at
+ * @size: The bitmap size in bits
+ */
+extern unsigned long find_next_bit(const unsigned long *addr,
+				   unsigned long size, unsigned long offset);
+
+/**
+ * find_next_zero_bit - find the next cleared bit in a memory region
+ * @addr: The address to base the search on
+ * @offset: The bitnumber to start searching at
+ * @size: The bitmap size in bits
+ */
+
+extern unsigned long find_next_zero_bit(const unsigned long *addr,
+					unsigned long size,
+					unsigned long offset);
+
+#endif /* CONFIG_GENERIC_FIND_NEXT_BIT */
 #endif /* __KERNEL__ */
 #endif

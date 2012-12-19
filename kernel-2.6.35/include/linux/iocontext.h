@@ -8,7 +8,7 @@ struct cfq_queue;
 struct cfq_io_context {
 	void *key;
 
-	void *cfqq[2];
+	struct cfq_queue *cfqq[2];
 
 	struct io_context *ioc;
 

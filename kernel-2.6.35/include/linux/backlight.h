@@ -86,7 +86,7 @@ struct backlight_device {
 	   registered this device has been unloaded, and if class_get_devdata()
 	   points to something in the body of that driver, it is also invalid. */
 	struct mutex ops_lock;
-	struct backlight_ops *ops;
+	const struct backlight_ops *ops;
 
 	/* The framebuffer notifier block */
 	struct notifier_block fb_notif;

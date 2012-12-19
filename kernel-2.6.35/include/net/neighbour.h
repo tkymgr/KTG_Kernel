@@ -88,12 +88,7 @@ struct neigh_statistics {
 	unsigned long unres_discards;	/* number of unresolved drops */
 };
 
-#define NEIGH_CACHE_STAT_INC(tbl, field)				\
-	do {								\
-		preempt_disable();					\
-		(per_cpu_ptr((tbl)->stats, smp_processor_id())->field)++; \
-		preempt_enable();					\
-	} while (0)
+#define NEIGH_CACHE_STAT_INC(tbl, field) this_cpu_inc((tbl)->stats->field)
 
 struct neighbour {
 	struct neighbour	*next;
@@ -169,7 +164,7 @@ struct neigh_table {
 	rwlock_t		lock;
 	unsigned long		last_rand;
 	struct kmem_cache		*kmem_cachep;
-	struct neigh_statistics	*stats;
+	struct neigh_statistics	__percpu *stats;
 	struct neighbour	**hash_buckets;
 	unsigned int		hash_mask;
 	__u32			hash_rnd;
@@ -303,6 +298,20 @@ static inline int neigh_event_send(struct neighbour *neigh, struct sk_buff *skb)
 		return __neigh_event_send(neigh, skb);
 	return 0;
 }
+
+#ifdef CONFIG_BRIDGE_NETFILTER
+static inline int neigh_hh_bridge(struct hh_cache *hh, struct sk_buff *skb)
+{
+	unsigned seq, hh_alen;
+
+	do {
+		seq = read_seqbegin(&hh->hh_lock);
+		hh_alen = HH_DATA_ALIGN(ETH_HLEN);
+		memcpy(skb->data - hh_alen, hh->hh_data, ETH_ALEN + hh_alen - ETH_HLEN);
+	} while (read_seqretry(&hh->hh_lock, seq));
+	return 0;
+}
+#endif
 
 static inline int neigh_hh_output(struct hh_cache *hh, struct sk_buff *skb)
 {

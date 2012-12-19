@@ -279,7 +279,7 @@ struct sock *cookie_v4_check(struct sock *sk, struct sk_buff *skb,
 
 	/* check for timestamp cookie support */
 	memset(&tcp_opt, 0, sizeof(tcp_opt));
-	tcp_parse_options(skb, &tcp_opt, &hash_location, 0, &rt->u.dst);
+	tcp_parse_options(skb, &tcp_opt, &hash_location, 0);
 
 	if (tcp_opt.saw_tstamp)
 		cookie_check_timestamp(&tcp_opt);
@@ -334,7 +334,8 @@ struct sock *cookie_v4_check(struct sock *sk, struct sk_buff *skb,
 	 * no easy way to do this.
 	 */
 	{
-		struct flowi fl = { .nl_u = { .ip4_u =
+		struct flowi fl = { .mark = sk->sk_mark,
+				    .nl_u = { .ip4_u =
 					      { .daddr = ((opt && opt->srr) ?
 							  opt->faddr :
 							  ireq->rmt_addr),
@@ -346,7 +347,7 @@ struct sock *cookie_v4_check(struct sock *sk, struct sk_buff *skb,
 					       { .sport = th->dest,
 						 .dport = th->source } } };
 		security_req_classify_flow(req, &fl);
-		if (ip_route_output_key(&init_net, &rt, &fl)) {
+		if (ip_route_output_key(sock_net(sk), &rt, &fl)) {
 			reqsk_free(req);
 			goto out;
 		}
@@ -357,7 +358,8 @@ struct sock *cookie_v4_check(struct sock *sk, struct sk_buff *skb,
 
 	tcp_select_initial_window(tcp_full_space(sk), req->mss,
 				  &req->rcv_wnd, &req->window_clamp,
-				  ireq->wscale_ok, &rcv_wscale);
+				  ireq->wscale_ok, &rcv_wscale,
+				  dst_metric(&rt->u.dst, RTAX_INITRWND));
 
 	ireq->rcv_wscale  = rcv_wscale;
 

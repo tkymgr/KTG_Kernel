@@ -20,19 +20,14 @@
 
 #include <linux/mm.h>
 #include <linux/module.h>
+#include <linux/slab.h>
 #include <linux/sysctl.h>
 #include <linux/workqueue.h>
 #include <net/tcp.h>
 #include <net/inet_common.h>
 #include <net/xfrm.h>
 
-#ifdef CONFIG_SYSCTL
-#define SYNC_INIT 0 /* let the user enable it */
-#else
-#define SYNC_INIT 1
-#endif
-
-int sysctl_tcp_syncookies __read_mostly = SYNC_INIT;
+int sysctl_tcp_syncookies __read_mostly = 1;
 EXPORT_SYMBOL(sysctl_tcp_syncookies);
 
 int sysctl_tcp_abort_on_overflow __read_mostly;
@@ -52,6 +47,7 @@ struct inet_timewait_death_row tcp_death_row = {
 	.twcal_timer	= TIMER_INITIALIZER(inet_twdr_twcal_tick, 0,
 					    (unsigned long)&tcp_death_row),
 };
+
 EXPORT_SYMBOL_GPL(tcp_death_row);
 
 static __inline__ int tcp_in_window(u32 seq, u32 end_seq, u32 s_win, u32 e_win)
@@ -100,9 +96,9 @@ tcp_timewait_state_process(struct inet_timewait_sock *tw, struct sk_buff *skb,
 	struct tcp_timewait_sock *tcptw = tcp_twsk((struct sock *)tw);
 	int paws_reject = 0;
 
+	tmp_opt.saw_tstamp = 0;
 	if (th->doff > (sizeof(*th) >> 2) && tcptw->tw_ts_recent_stamp) {
-		tmp_opt.tstamp_ok = 1;
-		tcp_parse_options(skb, &tmp_opt, &hash_location, 1, NULL);
+		tcp_parse_options(skb, &tmp_opt, &hash_location, 0);
 
 		if (tmp_opt.saw_tstamp) {
 			tmp_opt.ts_recent	= tcptw->tw_ts_recent;
@@ -266,7 +262,6 @@ kill:
 	inet_twsk_put(tw);
 	return TCP_TW_SUCCESS;
 }
-EXPORT_SYMBOL(tcp_timewait_state_process);
 
 /*
  * Move a socket to time-wait or dead fin-wait-2 state.
@@ -367,6 +362,7 @@ void tcp_twsk_destructor(struct sock *sk)
 		tcp_free_md5sig_pool();
 #endif
 }
+
 EXPORT_SYMBOL_GPL(tcp_twsk_destructor);
 
 static inline void TCP_ECN_openreq_child(struct tcp_sock *tp,
@@ -514,7 +510,6 @@ struct sock *tcp_create_openreq_child(struct sock *sk, struct request_sock *req,
 	}
 	return newsk;
 }
-EXPORT_SYMBOL(tcp_create_openreq_child);
 
 /*
  *	Process an incoming packet for SYN_RECV sockets represented
@@ -532,9 +527,9 @@ struct sock *tcp_check_req(struct sock *sk, struct sk_buff *skb,
 	__be32 flg = tcp_flag_word(th) & (TCP_FLAG_RST|TCP_FLAG_SYN|TCP_FLAG_ACK);
 	int paws_reject = 0;
 
-	if ((th->doff > (sizeof(*th) >> 2)) && (req->ts_recent)) {
-		tmp_opt.tstamp_ok = 1;
-		tcp_parse_options(skb, &tmp_opt, &hash_location, 1, NULL);
+	tmp_opt.saw_tstamp = 0;
+	if (th->doff > (sizeof(struct tcphdr)>>2)) {
+		tcp_parse_options(skb, &tmp_opt, &hash_location, 0);
 
 		if (tmp_opt.saw_tstamp) {
 			tmp_opt.ts_recent = req->ts_recent;
@@ -677,6 +672,7 @@ struct sock *tcp_check_req(struct sock *sk, struct sk_buff *skb,
 	if (req->retrans < inet_csk(sk)->icsk_accept_queue.rskq_defer_accept &&
 	    TCP_SKB_CB(skb)->end_seq == tcp_rsk(req)->rcv_isn + 1) {
 		inet_rsk(req)->acked = 1;
+		NET_INC_STATS_BH(sock_net(sk), LINUX_MIB_TCPDEFERACCEPTDROP);
 		return NULL;
 	}
 
@@ -710,7 +706,6 @@ embryonic_reset:
 	inet_csk_reqsk_queue_drop(sk, req, prev);
 	return NULL;
 }
-EXPORT_SYMBOL(tcp_check_req);
 
 /*
  * Queue segment on the new socket if the new socket is active,
@@ -735,11 +730,15 @@ int tcp_child_process(struct sock *parent, struct sock *child,
 		 * in main socket hash table and lock on listening
 		 * socket does not protect us more.
 		 */
-		sk_add_backlog(child, skb);
+		__sk_add_backlog(child, skb);
 	}
 
 	bh_unlock_sock(child);
 	sock_put(child);
 	return ret;
 }
+
+EXPORT_SYMBOL(tcp_check_req);
 EXPORT_SYMBOL(tcp_child_process);
+EXPORT_SYMBOL(tcp_create_openreq_child);
+EXPORT_SYMBOL(tcp_timewait_state_process);

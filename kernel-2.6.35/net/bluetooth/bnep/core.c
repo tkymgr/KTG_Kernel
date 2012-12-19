@@ -35,6 +35,7 @@
 #include <linux/freezer.h>
 #include <linux/errno.h>
 #include <linux/net.h>
+#include <linux/slab.h>
 #include <net/sock.h>
 
 #include <linux/socket.h>
@@ -78,7 +79,7 @@ static struct bnep_session *__bnep_get_session(u8 *dst)
 static void __bnep_link_session(struct bnep_session *s)
 {
 	/* It's safe to call __module_get() here because sessions are added
-	   by the socket layer which has to hold the refference to this module.
+	   by the socket layer which has to hold the reference to this module.
 	 */
 	__module_get(THIS_MODULE);
 	list_add(&s->list, &bnep_session_list);
@@ -245,8 +246,7 @@ static int bnep_rx_control(struct bnep_session *s, void *data, int len)
 		break;
 
 	case BNEP_SETUP_CONN_REQ:
-		err = bnep_send_rsp(s, BNEP_SETUP_CONN_RSP,
-					BNEP_CONN_NOT_ALLOWED);
+		err = bnep_send_rsp(s, BNEP_SETUP_CONN_RSP, BNEP_CONN_NOT_ALLOWED);
 		break;
 
 	default: {
@@ -474,14 +474,17 @@ static int bnep_session(void *arg)
 	set_user_nice(current, -15);
 
 	init_waitqueue_entry(&wait, current);
-	add_wait_queue(sk->sk_sleep, &wait);
+	add_wait_queue(sk_sleep(sk), &wait);
 	while (!atomic_read(&s->killed)) {
 		set_current_state(TASK_INTERRUPTIBLE);
 
 		// RX
 		while ((skb = skb_dequeue(&sk->sk_receive_queue))) {
 			skb_orphan(skb);
-			bnep_rx_frame(s, skb);
+			if (!skb_linearize(skb))
+				bnep_rx_frame(s, skb);
+			else
+				kfree_skb(skb);
 		}
 
 		if (sk->sk_state != BT_CONNECTED)
@@ -496,7 +499,7 @@ static int bnep_session(void *arg)
 		schedule();
 	}
 	set_current_state(TASK_RUNNING);
-	remove_wait_queue(sk->sk_sleep, &wait);
+	remove_wait_queue(sk_sleep(sk), &wait);
 
 	/* Cleanup session */
 	down_write(&bnep_session_sem);
@@ -507,7 +510,7 @@ static int bnep_session(void *arg)
 	/* Wakeup user-space polling for socket errors */
 	s->sock->sk->sk_err = EUNATCH;
 
-	wake_up_interruptible(s->sock->sk->sk_sleep);
+	wake_up_interruptible(sk_sleep(s->sock->sk));
 
 	/* Release the socket */
 	fput(s->sock->file);
@@ -633,12 +636,12 @@ int bnep_del_connection(struct bnep_conndel_req *req)
 	s = __bnep_get_session(req->dst);
 	if (s) {
 		/* Wakeup user-space which is polling for socket errors.
-		 * This is temporary hack untill we have shutdown in L2CAP */
+		 * This is temporary hack until we have shutdown in L2CAP */
 		s->sock->sk->sk_err = EUNATCH;
 
 		/* Kill session thread */
 		atomic_inc(&s->killed);
-		wake_up_interruptible(s->sock->sk->sk_sleep);
+		wake_up_interruptible(sk_sleep(s->sock->sk));
 	} else
 		err = -ENOENT;
 

@@ -9,7 +9,7 @@
  * published by the Free Software Foundation.
  *
  */
-
+#define pr_fmt(fmt) KBUILD_MODNAME ": " fmt
 #include <linux/module.h>
 #include <linux/skbuff.h>
 #include <linux/ip.h>
@@ -24,23 +24,8 @@
 #include <net/netfilter/ipv4/nf_defrag_ipv4.h>
 #include <net/netfilter/nf_tproxy_core.h>
 
-static bool tproxy_sk_is_transparent(struct sock *sk)
-{
-	if (sk->sk_state != TCP_TIME_WAIT) {
-		if (inet_sk(sk)->transparent)
-			return true;
-		sock_put(sk);
-	} else {
-		if (inet_twsk(sk)->tw_transparent)
-			return true;
-		inet_twsk_put(inet_twsk(sk));
-	}
-	return false;
-}
-
-
 static unsigned int
-tproxy_tg(struct sk_buff *skb, const struct xt_target_param *par)
+tproxy_tg(struct sk_buff *skb, const struct xt_action_param *par)
 {
 	const struct iphdr *iph = ip_hdr(skb);
 	const struct xt_tproxy_target_info *tgi = par->targinfo;
@@ -57,7 +42,7 @@ tproxy_tg(struct sk_buff *skb, const struct xt_target_param *par)
 				   par->in, true);
 
 	/* NOTE: assign_sock consumes our sk reference */
-	if (sk && tproxy_sk_is_transparent(sk)) {
+	if (sk && nf_tproxy_assign_sock(skb, sk)) {
 		/* This should be in a separate target, but we don't do multiple
 		   targets on the same rule yet */
 		skb->mark = (skb->mark & ~tgi->mark_mask) ^ tgi->mark_value;
@@ -65,8 +50,6 @@ tproxy_tg(struct sk_buff *skb, const struct xt_target_param *par)
 		pr_debug("redirecting: proto %u %08x:%u -> %08x:%u, mark: %x\n",
 			 iph->protocol, ntohl(iph->daddr), ntohs(hp->dest),
 			 ntohl(tgi->laddr), ntohs(tgi->lport), skb->mark);
-
-		nf_tproxy_assign_sock(skb, sk);
 		return NF_ACCEPT;
 	}
 
@@ -76,17 +59,17 @@ tproxy_tg(struct sk_buff *skb, const struct xt_target_param *par)
 	return NF_DROP;
 }
 
-static bool tproxy_tg_check(const struct xt_tgchk_param *par)
+static int tproxy_tg_check(const struct xt_tgchk_param *par)
 {
 	const struct ipt_ip *i = par->entryinfo;
 
 	if ((i->proto == IPPROTO_TCP || i->proto == IPPROTO_UDP)
 	    && !(i->invflags & IPT_INV_PROTO))
-		return true;
+		return 0;
 
-	pr_info("xt_TPROXY: Can be used only in combination with "
+	pr_info("Can be used only in combination with "
 		"either -p tcp or -p udp\n");
-	return false;
+	return -EINVAL;
 }
 
 static struct xt_target tproxy_tg_reg __read_mostly = {

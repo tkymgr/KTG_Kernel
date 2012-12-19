@@ -617,17 +617,6 @@ extern void ip_vs_init_hash_table(struct list_head *table, int rows);
  *     (from ip_vs_conn.c)
  */
 
-/*
- *     IPVS connection entry hash table
- */
-#ifndef CONFIG_IP_VS_TAB_BITS
-#define CONFIG_IP_VS_TAB_BITS   12
-#endif
-
-#define IP_VS_CONN_TAB_BITS	CONFIG_IP_VS_TAB_BITS
-#define IP_VS_CONN_TAB_SIZE     (1 << IP_VS_CONN_TAB_BITS)
-#define IP_VS_CONN_TAB_MASK     (IP_VS_CONN_TAB_SIZE - 1)
-
 enum {
 	IP_VS_DIR_INPUT = 0,
 	IP_VS_DIR_OUTPUT,

@@ -248,10 +248,10 @@ getorigdst(struct sock *sk, int optval, void __user *user, int *len)
 	struct nf_conntrack_tuple tuple;
 
 	memset(&tuple, 0, sizeof(tuple));
-	tuple.src.u3.ip = inet->rcv_saddr;
-	tuple.src.u.tcp.port = inet->sport;
-	tuple.dst.u3.ip = inet->daddr;
-	tuple.dst.u.tcp.port = inet->dport;
+	tuple.src.u3.ip = inet->inet_rcv_saddr;
+	tuple.src.u.tcp.port = inet->inet_sport;
+	tuple.dst.u3.ip = inet->inet_daddr;
+	tuple.dst.u.tcp.port = inet->inet_dport;
 	tuple.src.l3num = PF_INET;
 	tuple.dst.protonum = sk->sk_protocol;
 
@@ -267,7 +267,7 @@ getorigdst(struct sock *sk, int optval, void __user *user, int *len)
 		return -EINVAL;
 	}
 
-	h = nf_conntrack_find_get(sock_net(sk), &tuple);
+	h = nf_conntrack_find_get(sock_net(sk), NF_CT_DEFAULT_ZONE, &tuple);
 	if (h) {
 		struct sockaddr_in sin;
 		struct nf_conn *ct = nf_ct_tuplehash_to_ctrack(h);
@@ -382,7 +382,7 @@ static int __init nf_conntrack_l3proto_ipv4_init(void)
 
 	ret = nf_conntrack_l4proto_register(&nf_conntrack_l4proto_tcp4);
 	if (ret < 0) {
-		printk("nf_conntrack_ipv4: can't register tcp.\n");
+		pr_err("nf_conntrack_ipv4: can't register tcp.\n");
 		goto cleanup_sockopt;
 	}
 

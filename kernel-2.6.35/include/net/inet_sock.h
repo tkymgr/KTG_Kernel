@@ -116,17 +116,19 @@ struct inet_sock {
 	struct ipv6_pinfo	*pinet6;
 #endif
 	/* Socket demultiplex comparisons on incoming packets. */
-	__be32			daddr;
-	__be32			rcv_saddr;
-	__be16			dport;
-	__u16			num;
-	__be32			saddr;
+	__be32			inet_daddr;
+	__be32			inet_rcv_saddr;
+	__be16			inet_dport;
+	__u16			inet_num;
+	__be32			inet_saddr;
 	__s16			uc_ttl;
 	__u16			cmsg_flags;
+	__be16			inet_sport;
+	__u16			inet_id;
+
 	struct ip_options	*opt;
-	__be16			sport;
-	__u16			id;
 	__u8			tos;
+	__u8			min_ttl;
 	__u8			mc_ttl;
 	__u8			pmtudisc;
 	__u8			recverr:1,
@@ -191,10 +193,10 @@ static inline unsigned int inet_ehashfn(struct net *net,
 static inline int inet_sk_ehashfn(const struct sock *sk)
 {
 	const struct inet_sock *inet = inet_sk(sk);
-	const __be32 laddr = inet->rcv_saddr;
-	const __u16 lport = inet->num;
-	const __be32 faddr = inet->daddr;
-	const __be16 fport = inet->dport;
+	const __be32 laddr = inet->inet_rcv_saddr;
+	const __u16 lport = inet->inet_num;
+	const __be32 faddr = inet->inet_daddr;
+	const __be16 fport = inet->inet_dport;
 	struct net *net = sock_net(sk);
 
 	return inet_ehashfn(net, laddr, lport, faddr, fport);

@@ -26,6 +26,7 @@
 #include <linux/security.h>
 #include <linux/pid.h>
 #include <linux/nsproxy.h>
+#include <linux/slab.h>
 
 #include <asm/system.h>
 #include <asm/uaccess.h>
@@ -78,11 +79,10 @@ static int scm_fp_copy(struct cmsghdr *cmsg, struct scm_fp_list **fplp)
 			return -ENOMEM;
 		*fplp = fpl;
 		fpl->count = 0;
-		fpl->max = SCM_MAX_FD;
 	}
 	fpp = &fpl->fp[fpl->count];
 
-	if (fpl->count + num > fpl->max)
+	if (fpl->count + num > SCM_MAX_FD)
 		return -EINVAL;
 
 	/*
@@ -170,6 +170,30 @@ int __scm_send(struct socket *sock, struct msghdr *msg, struct scm_cookie *p)
 			err = scm_check_creds(&p->creds);
 			if (err)
 				goto error;
+
+			if (pid_vnr(p->pid) != p->creds.pid) {
+				struct pid *pid;
+				err = -ESRCH;
+				pid = find_get_pid(p->creds.pid);
+				if (!pid)
+					goto error;
+				put_pid(p->pid);
+				p->pid = pid;
+			}
+
+			if ((p->cred->euid != p->creds.uid) ||
+				(p->cred->egid != p->creds.gid)) {
+				struct cred *cred;
+				err = -ENOMEM;
+				cred = prepare_creds();
+				if (!cred)
+					goto error;
+
+				cred->uid = cred->euid = p->creds.uid;
+				cred->gid = cred->egid = p->creds.uid;
+				put_cred(p->cred);
+				p->cred = cred;
+			}
 			break;
 		default:
 			goto error;
@@ -303,12 +327,11 @@ struct scm_fp_list *scm_fp_dup(struct scm_fp_list *fpl)
 	if (!fpl)
 		return NULL;
 
-	new_fpl = kmemdup(fpl, offsetof(struct scm_fp_list, fp[fpl->count]),
-			  GFP_KERNEL);
+	new_fpl = kmalloc(sizeof(*fpl), GFP_KERNEL);
 	if (new_fpl) {
-		for (i = 0; i < fpl->count; i++)
+		for (i=fpl->count-1; i>=0; i--)
 			get_file(fpl->fp[i]);
-		new_fpl->max = new_fpl->count;
+		memcpy(new_fpl, fpl, sizeof(*fpl));
 	}
 	return new_fpl;
 }

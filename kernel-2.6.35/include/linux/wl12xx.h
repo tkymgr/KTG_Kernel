@@ -59,20 +59,7 @@ struct wl12xx_platform_data {
 /* Platform does not support level trigger interrupts */
 #define WL12XX_PLATFORM_QUIRK_EDGE_IRQ	BIT(0)
 
-#ifdef CONFIG_WL12XX_PLATFORM_DATA
-
 int wl12xx_set_platform_data(const struct wl12xx_platform_data *data);
-
-#else
-
-static inline
-int wl12xx_set_platform_data(const struct wl12xx_platform_data *data)
-{
-	return -ENOSYS;
-}
-
-#endif
-
 const struct wl12xx_platform_data *wl12xx_get_platform_data(void);
 
 #endif
