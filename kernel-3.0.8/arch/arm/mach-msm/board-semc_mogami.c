@@ -96,7 +96,7 @@
 #ifdef CONFIG_TOUCHSCREEN_CY8CTMA300_SPI
 #include <linux/spi/cy8ctma300_touch.h>
 #endif
-#include <linux/leds-as3676_semc.h>
+#include <linux/leds-as3676.h>
 #include "board-semc_mogami-leds.h"
 #include "board-semc_mogami-touch.h"
 #include <linux/i2c/bq24185_charger.h>

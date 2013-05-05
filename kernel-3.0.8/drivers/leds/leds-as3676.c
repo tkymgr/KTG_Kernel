@@ -8,6 +8,7 @@
  * directory of this archive for more details.
  */
 
+#include <linux/slab.h>
 #include <linux/i2c.h>
 #include <linux/leds.h>
 #include <linux/module.h>
@@ -17,9 +18,8 @@
 #include <linux/earlysuspend.h>
 #endif
 #include <linux/delay.h>
-#include <linux/slab.h>
-#define AS3676_NAME "as3676"
 
+#define AS3676_NAME "as3676"
 
 enum as3676_cmode {
 	AS3676_CMODE_IMMEDIATE,
@@ -373,8 +373,6 @@ static u8 as3676_restore_regs[] = {
  * you *could* but it would be really really stupid */
 #define AS3676_INTERFACE_MAX AS3676_SINK_MAX
 
-#define AS3676_ADC_READ_RETRY_NUM  10
-
 static const struct as3676_als_config as3676_default_config = {
 	.gain = AS3676_GAIN_1,
 	.filter_up = AS3676_FILTER_1HZ,
@@ -421,7 +419,6 @@ struct as3676_interface {
 	u64 regs;
 	int flags;
 	int max_current;
-	int hw_max_current;
 	struct led_classdev cdev;
 	struct kobject kobj;
 };
@@ -1343,8 +1340,8 @@ static ssize_t as3676_max_current_store(struct device *dev,
 	as3676_lock(rd);
 	pdata = rd->client->dev.platform_data;
 
-	if (curr_val > pdata->leds[intf->index].hw_max_current)
-		curr_val = pdata->leds[intf->index].hw_max_current;
+	if (curr_val > pdata->leds[intf->index].max_current)
+		curr_val = pdata->leds[intf->index].max_current;
 
 	intf->max_current = (int)curr_val;
 	as3676_unlock(rd);
@@ -1397,48 +1394,8 @@ static ssize_t as3676_mode_store(struct device *dev,
 	return size;
 }
 
-static ssize_t as3676_adc_als_value_show(struct device *dev,
-			struct device_attribute *attr, char *buf)
-{
-	struct as3676_record *rd = dev_get_drvdata(dev);
-	struct as3676_interface *intf;
-	struct led_classdev *led_cdev = dev_get_drvdata(&rd->client->dev);
-	u32 adc_result;
-	u8 val;
-	int i;
-
-	intf = container_of(led_cdev, struct as3676_interface, cdev);
-
-	as3676_lock(rd);
-	val = reg_get(rd, AS3676_ADC_CTRL);
-	as3676_unlock(rd);
-	if ((val & 0x3F) != AS3676_ALS_SOURCE_GPIO2) {
-		dev_err(&rd->client->dev, "als source failed\n");
-		return -EFAULT;
-	}
-
-	for (i = 0; i < AS3676_ADC_READ_RETRY_NUM; i++) {
-		adc_result = i2c_smbus_read_byte_data(rd->client, 0x27);
-		if (!(adc_result & 0x80))
-			break;
-		/* Wait for the end of the next ADC conversion cycle */
-		udelay(10);
-	}
-	if (i >= AS3676_ADC_READ_RETRY_NUM) {
-		dev_err(&rd->client->dev, "adc_result failed\n");
-		return -EFAULT;
-	}
-
-	adc_result = (adc_result & 0x7F) << 3;
-	adc_result |= i2c_smbus_read_byte_data(rd->client, 0x28) & 0x07;
-
-	return snprintf(buf, PAGE_SIZE, "%u\n", adc_result);
-}
-
-static DEVICE_ATTR(max_current, 0600, as3676_max_current_show,
-					as3676_max_current_store);
+static DEVICE_ATTR(max_current, 0600, as3676_max_current_show, as3676_max_current_store);
 static DEVICE_ATTR(mode, 0200, NULL, as3676_mode_store);
-static DEVICE_ATTR(adc_als_value, 0444, as3676_adc_als_value_show, NULL);
 
 static void dummy_kobj_release(struct kobject *kobj)
 { }
@@ -1631,8 +1588,6 @@ static int __devexit as3676_remove(struct i2c_client *client)
 
 		kobject_put(&intf->kobj);
 	}
-	device_remove_file(&client->dev, &dev_attr_adc_als_value);
-
 #ifdef CONFIG_HAS_EARLYSUSPEND
 	unregister_early_suspend(&rd->early_suspend);
 #endif
@@ -1734,7 +1689,6 @@ static int __devinit as3676_probe(struct i2c_client *client,
 #endif
 		intf->flags = led->flags;
 		intf->max_current = led->max_current;
-		intf->hw_max_current = led->hw_max_current;
 		intf->index = i;
 
 		for (j = 0; j < AS3676_SINK_MAX; ++j) {
@@ -1764,11 +1718,6 @@ static int __devinit as3676_probe(struct i2c_client *client,
 			dev_err(&client->dev,
 				"create dev_attr_mode failed\n");
 	}
-
-	err = device_create_file(&client->dev, &dev_attr_adc_als_value);
-	if (err)
-		dev_err(&client->dev,
-			"create dev_attr_adc_als_value failed\n");
 
 	/* Enable charge pump and connect all leds to it */
 	/* TODO: double check that these are appropriate according to pdata */

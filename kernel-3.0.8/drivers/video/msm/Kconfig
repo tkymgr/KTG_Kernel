@@ -81,6 +81,11 @@ config FB_MSM_MDP40
 	  Say Y here if this is msm7x30 variant platform.
 endchoice
 
+config FB_MSM_MSM2_1_DISABLE
+	depends on FB_MSM_MDP40
+	bool "MSM2.1 HW fix disable"
+	default n
+
 config FB_MSM_EBI2
 	bool
 	default n

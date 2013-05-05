@@ -129,17 +129,12 @@ static struct device_attribute novatek_dev_attr_vsync = {
 static void novatek_controller_execute(const struct novatek_reg_set *rs)
 {
 	int n;
-#ifndef CONFIG_FB_MSM_MDDI_NOVATEK_DISABLE_MDDI
-	int rc;
-#endif
-#ifdef CONFIG_FB_MSM_MDDI_NOVATEK_DISABLE_MDDI
 	u8 i2c_data[4];
 
 	if (!novatek_i2c_client) {
 		pr_err("MDDI_NOVATEK: no i2c client!\n");
 		return;
 	}
-#endif
 	if (rs == NULL) {
 		pr_err(MDDI_NOVATEK_FWVGA_NAME
 				": no register set for state!\n");
@@ -152,17 +147,11 @@ static void novatek_controller_execute(const struct novatek_reg_set *rs)
 				break;
 			hr_msleep(rs[n].val);
 		} else {
-#ifdef CONFIG_FB_MSM_MDDI_NOVATEK_DISABLE_MDDI
 			i2c_data[0] = rs[n].reg >> 8;
 			i2c_data[1] = rs[n].reg & 0xFF;
 			i2c_data[2] = rs[n].val >> 8;
 			i2c_data[3] = rs[n].val & 0xFF;
 			i2c_master_send(novatek_i2c_client, i2c_data, 4);
-#else
-			rc = write_client_reg(rs[n].reg, rs[n].val);
-			if (rc != 0)
-				return;
-#endif
 		}
 	}
 }
@@ -244,11 +233,6 @@ static int novatek_ic_off_panel_off(struct platform_device *pdev)
 	default:
 		break;
 	}
-
-#ifdef CONFIG_FB_MSM_PANEL_ESD
-	if (rd->panel->esd_support)
-		cancel_delayed_work_sync(&rd->work);
-#endif
 
 	rd->mode = NVT_MODE_OFF;
 	return 0;
