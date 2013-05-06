@@ -137,11 +137,6 @@
 #include <linux/clearpad.h>
 #endif
 
-#ifdef CONFIG_FB_MSM_HDMI_SII9024A_PANEL
-#define MSM_HDMI_SIZE           0x30000
-#else
-#define MSM_HDMI_SIZE           0
-#endif /* CONFIG_FB_MSM_HDMI_SII9024A_PANEL */
 
 #ifdef CONFIG_USB_G_ANDROID
 #include <linux/usb/android.h>
@@ -174,17 +169,6 @@
 
 #include "board-msm7x30-regulator.h"
 
-#ifdef CONFIG_FB_MSM_HDPI
-#define MSM_PMEM_SF_SIZE  0x1C00000
-#else
-#define MSM_PMEM_SF_SIZE  0x1600000
-#endif
-#ifdef CONFIG_FB_MSM_TRIPLE_BUFFER
-#define MSM_FB_PRIM_BUF_SIZE   (864 * 480 * 4 * 3) /* 4bpp * 3 Pages */
-#else
-#define MSM_FB_PRIM_BUF_SIZE   (864 * 480 * 4 * 2) /* 4bpp * 2 Pages */
-#endif
-
 #if defined(CONFIG_FB_MSM_MDDI_SONY_HVGA_LCD) || \
 	defined(CONFIG_FB_MSM_MDDI_HITACHI_HVGA_LCD) || \
 	defined(CONFIG_FB_MSM_MDDI_SII_HVGA_LCD) || \
@@ -192,23 +176,23 @@
 #define GPIO_MSM_MDDI_XRES		(157)
 #endif
 
-
-#ifdef CONFIG_FB_MSM_OVERLAY0_WRITEBACK
-/* width x height x 3 bpp x 2 frame buffer */
-#define MSM_FB_OVERLAY0_WRITEBACK_SIZE roundup((864 * 480 * 3 * 2), 4096)
-#else
 #define MSM_FB_OVERLAY0_WRITEBACK_SIZE  0
-#endif
 
-#ifdef CONFIG_FB_MSM_HDMI_SII9024A_PANEL
-#define MSM_FB_EXT_BUF_SIZE 0x30000
+#define MSM_PMEM_SF_SIZE	0x1700000
+#ifdef CONFIG_FB_MSM_TRIPLE_BUFFER
+#define MSM_FB_PRIM_BUF_SIZE            0x780000
 #else
-#define MSM_FB_EXT_BUF_SIZE    0
+#define MSM_FB_PRIM_BUF_SIZE            0x500000
 #endif
-#define MSM_FB_SIZE roundup(MSM_FB_PRIM_BUF_SIZE + MSM_FB_EXT_BUF_SIZE, 4096)
+#ifdef CONFIG_FB_MSM_HDMI_SII9024A_PANEL
+#define MSM_HDMI_SIZE           0x30000
+#else
+#define MSM_HDMI_SIZE           0
+#endif /* CONFIG_FB_MSM_HDMI_SII9024A_PANEL */
+#define MSM_FB_SIZE		MSM_FB_PRIM_BUF_SIZE + MSM_HDMI_SIZE
 
-#define MSM_PMEM_ADSP_SIZE      0x1C00000
 #define MSM_FLUID_PMEM_ADSP_SIZE	0x2800000
+#define MSM_PMEM_ADSP_SIZE      0x1E00000
 #define PMEM_KERNEL_EBI0_SIZE   0x600000
 
 #define PMIC_GPIO_INT		27
@@ -4502,95 +4486,6 @@ static struct platform_device sii_uio_dev = {
 static struct lcdc_platform_data dtv_pdata = {
 };
 #endif /* CONFIG_FB_MSM_HDMI_SII9024A_PANEL */
-
-#ifdef HDMI_RESET
-static unsigned dtv_reset_gpio =
-	GPIO_CFG(37, 0, GPIO_CFG_OUTPUT, GPIO_CFG_NO_PULL, GPIO_CFG_2MA);
-#endif
-
-static struct regulator_bulk_data hdmi_core_regs[] = {
-	{ .supply = "ldo8",  .min_uV = 1800000, .max_uV = 1800000 },
-};
-
-static struct regulator_bulk_data hdmi_comm_regs[] = {
-	{ .supply = "ldo8",  .min_uV = 1800000, .max_uV = 1800000 },
-	{ .supply = "ldo10", .min_uV = 2600000, .max_uV = 2600000 },
-};
-
-static struct regulator_bulk_data hdmi_cec_regs[] = {
-	{ .supply = "ldo17", .min_uV = 2600000, .max_uV = 2600000 },
-};
-
-static int __init hdmi_init_regs(void)
-{
-	int rc;
-
-	rc = regulator_bulk_get(NULL, ARRAY_SIZE(hdmi_core_regs),
-			hdmi_core_regs);
-
-	if (rc) {
-		pr_err("%s: could not get %s regulators: %d\n",
-				__func__, "core", rc);
-		goto out;
-	}
-
-	rc = regulator_bulk_set_voltage(ARRAY_SIZE(hdmi_core_regs),
-			hdmi_core_regs);
-
-	if (rc) {
-		pr_err("%s: could not set %s voltages: %d\n",
-				__func__, "core", rc);
-		goto free_core;
-	}
-
-	rc = regulator_bulk_get(NULL, ARRAY_SIZE(hdmi_comm_regs),
-			hdmi_comm_regs);
-
-	if (rc) {
-		pr_err("%s: could not get %s regulators: %d\n",
-				__func__, "comm", rc);
-		goto free_core;
-	}
-
-	rc = regulator_bulk_set_voltage(ARRAY_SIZE(hdmi_comm_regs),
-			hdmi_comm_regs);
-
-	if (rc) {
-		pr_err("%s: could not set %s voltages: %d\n",
-				__func__, "comm", rc);
-		goto free_comm;
-	}
-
-	rc = regulator_bulk_get(NULL, ARRAY_SIZE(hdmi_cec_regs),
-			hdmi_cec_regs);
-
-	if (rc) {
-		pr_err("%s: could not get %s regulators: %d\n",
-				__func__, "cec", rc);
-		goto free_comm;
-	}
-
-	rc = regulator_bulk_set_voltage(ARRAY_SIZE(hdmi_cec_regs),
-			hdmi_cec_regs);
-
-	if (rc) {
-		pr_err("%s: could not set %s voltages: %d\n",
-				__func__, "cec", rc);
-		goto free_cec;
-	}
-
-	return 0;
-
-free_cec:
-	regulator_bulk_free(ARRAY_SIZE(hdmi_cec_regs), hdmi_cec_regs);
-free_comm:
-	regulator_bulk_free(ARRAY_SIZE(hdmi_comm_regs), hdmi_comm_regs);
-free_core:
-	regulator_bulk_free(ARRAY_SIZE(hdmi_core_regs), hdmi_core_regs);
-out:
-	return rc;
-}
-
 static struct msm_serial_hs_platform_data msm_uart_dm1_pdata = {
        .inject_rx_on_wakeup = 1,
        .rx_to_inject = 0xFD,
@@ -5698,34 +5593,9 @@ out:
 #endif
 static void __init msm7x30_init_mmc(void)
 {
-//	if (mmc_regulator_init(3, "s3", 1800000))
-//		goto out3;
-//	msm7x30_sdc3_data.swfi_latency = msm7x30_power_collapse_latency(
-//		MSM_PM_SLEEP_MODE_RAMP_DOWN_AND_WAIT_FOR_INTERRUPT);
-//	msm_sdcc_setup_gpio(3, 1);
 	msm_add_sdcc(3, &msm7x30_sdc3_data);
-//out3:
-//	if (mmc_regulator_init(4, "mmc", 2850000))
-//		return;
-//	msm7x30_sdc4_data.swfi_latency = msm7x30_power_collapse_latency(
-//		MSM_PM_SLEEP_MODE_RAMP_DOWN_AND_WAIT_FOR_INTERRUPT);
-	msm_add_sdcc(4, &msm7x30_sdc4_data);
-}
 
-static void __init shared_vreg_on(void)
-{
-#ifdef CONFIG_MSM_UNDERVOLT_TOUCH
-	vreg_helper_on(VREG_L20, 2800);
-#else
-	vreg_helper_on(VREG_L20, 3050);
-#endif
-	vreg_helper_on(VREG_L10, 2600);
-#ifdef CONFIG_MSM_UNDERVOLT_LCD
-	vreg_helper_on(VREG_L15, 2300);
-#else
-	vreg_helper_on(VREG_L15, 2900);
-#endif
-	vreg_helper_on(VREG_L8, 1800);
+	msm_add_sdcc(4, &msm7x30_sdc4_data);
 }
 
 static void __init msm7x30_init_nand(void)
@@ -5828,6 +5698,16 @@ static void __init mogami_temp_fixups(void)
 	gpio_set_value(137, 1);	/* UART1DM_TXD */
 }
 
+static void __init shared_vreg_on(void)
+{
+	vreg_helper_on(VREG_L20, 2800);
+//	vreg_helper_on(VREG_L20, 3050);
+	vreg_helper_on(VREG_L10, 2600);
+	vreg_helper_on(VREG_L15, 2300);
+//	vreg_helper_on(VREG_L15, 2900);
+	vreg_helper_on(VREG_L8, 1800);
+}
+
 static void __init msm7x30_init(void)
 {
 	int rc;
@@ -5892,7 +5772,6 @@ static void __init msm7x30_init(void)
 #ifdef CONFIG_BOSCH_BMA150
 	sensors_ldo_init();
 #endif
-	hdmi_init_regs();
 	msm_fb_add_devices();
 	msm_pm_set_platform_data(msm_pm_data, ARRAY_SIZE(msm_pm_data));
 	BUG_ON(msm_pm_boot_init(&msm_pm_boot_pdata));

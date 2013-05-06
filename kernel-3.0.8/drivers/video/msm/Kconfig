@@ -112,6 +112,10 @@ config FB_MSM_DTV
 	bool
 	default n
 
+config FB_MSM_MDDI_NOVATEK_DISABLE_MDDI
+	bool "Disable MDDI"
+	default n
+
 config FB_MSM_EXTMDDI
 	bool
 	default n
