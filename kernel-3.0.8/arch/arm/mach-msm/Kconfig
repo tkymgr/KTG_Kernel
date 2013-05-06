@@ -2001,6 +2001,13 @@ config MSM_WATCHDOG
 		not run during the bootup process, so it will not catch any early
 		lockups.
 
+config PMIC_TIME
+	bool "Export pmic time as sysfs entry"
+	depends on (ARCH_MSM)
+	default n
+	help
+	  This exports pmic time in a sysfs entry.
+
 config SEMC_RPC_SERVER_HANDSET
 	bool "Enable SEMC handset rpc dispatcher"
 	depends on ARCH_MSM7X30 && MSM_ONCRPCROUTER && !MSM_RPCSERVER_HANDSET
@@ -2033,6 +2040,23 @@ config SIMPLE_REMOTE_INVERT_PLUG_DETECTION_STATE
 	  currently the plug detection state was low state when headphone
 	  was inserted, but it is high state on some products, so that
 	  we need invert this state on these products.
+
+config USB_PRODUCT_SUFFIX
+	hex "Suffix of USB product id"
+	default 0
+
+config USB_HS_DRV_AMPLITUDE
+	int "USB high speed driver amplitude ratio"
+	range 0 4
+	default 0
+	help
+	  Set 0 if ratio is HS_DRV_AMPLITUDE_DEFAULT
+	  Set 1 if ratio is HS_DRV_AMPLITUDE_ZERO_PERCENT
+	  Set 2 if ratio is HS_DRV_AMPLITUDE_25_PERCENTI
+	  Set 3 if ratio is HS_DRV_AMPLITUDE_5_PERCENT
+	  Set 4 if ratio is HS_DRV_AMPLITUDE_75_PERCENT
+
+	  The ratio is defined in kernel\arch\arm\mach-msm\include\mach\msm_hsusb.h
 
 config MSM_DLOAD_MODE
 	bool "Enable download mode on crashes"
