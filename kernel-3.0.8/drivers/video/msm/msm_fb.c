@@ -54,6 +54,10 @@
 extern int load_565rle_image(char *filename);
 #endif
 
+#ifdef CONFIG_FB_MSM_TRIPLE_BUFFER
+#define MSM_FB_NUM	3
+#endif
+
 static unsigned char *fbram;
 static unsigned char *fbram_phys;
 static int fbram_size;
@@ -62,6 +66,8 @@ static struct platform_device *pdev_list[MSM_FB_MAX_DEV_LIST];
 static int pdev_list_cnt;
 
 int vsync_mode = 1;
+
+#define MAX_BLIT_REQ 256
 
 #define MAX_FBI_LIST 32
 static struct fb_info *fbi_list[MAX_FBI_LIST];
@@ -112,6 +118,15 @@ static int msm_fb_mmap(struct fb_info *info, struct vm_area_struct * vma);
 int msm_fb_debugfs_file_index;
 struct dentry *msm_fb_debugfs_root;
 struct dentry *msm_fb_debugfs_file[MSM_FB_MAX_DBGFS];
+
+DEFINE_MUTEX(msm_fb_notify_update_sem);
+void msmfb_no_update_notify_timer_cb(unsigned long data)
+{
+	struct msm_fb_data_type *mfd = (struct msm_fb_data_type *)data;
+	if (!mfd)
+		pr_err("%s mfd NULL\n", __func__);
+	complete(&mfd->msmfb_no_update_notify);
+}
 
 struct dentry *msm_fb_get_debugfs_root(void)
 {
@@ -233,6 +248,12 @@ static ssize_t msm_fb_msm_fb_type(struct device *dev,
 	case DTV_PANEL:
 		ret = snprintf(buf, PAGE_SIZE, "dtv panel\n");
 		break;
+	case MIPI_VIDEO_PANEL:
+		ret = snprintf(buf, PAGE_SIZE, "mipi dsi video panel\n");
+		break;
+	case MIPI_CMD_PANEL:
+		ret = snprintf(buf, PAGE_SIZE, "mipi dsi cmd panel\n");
+		break;
 	default:
 		ret = snprintf(buf, PAGE_SIZE, "unknown panel\n");
 		break;
@@ -298,10 +319,6 @@ static int msm_fb_probe(struct platform_device *pdev)
 
 	mfd = (struct msm_fb_data_type *)platform_get_drvdata(pdev);
 
-	err = pm_runtime_set_active(&pdev->dev);
-	if (err < 0)
-		printk(KERN_ERR "pm_runtime: fail to set active.\n");
-
 	if (!mfd)
 		return -ENODEV;
 
@@ -316,10 +333,12 @@ static int msm_fb_probe(struct platform_device *pdev)
 #ifdef CONFIG_FB_MSM_OVERLAY
 	mfd->overlay_play_enable = 1;
 #endif
-
 	rc = msm_fb_register(mfd);
 	if (rc)
 		return rc;
+	err = pm_runtime_set_active(mfd->fbi->dev);
+	if (err < 0)
+		printk(KERN_ERR "pm_runtime: fail to set active.\n");
 
 #if 0
 #ifdef CONFIG_FB_BACKLIGHT
@@ -577,12 +596,36 @@ static struct platform_driver msm_fb_driver = {
 		   },
 };
 
+#if defined(CONFIG_HAS_EARLYSUSPEND) && defined(CONFIG_FB_MSM_MDP303)
+static void memset32_io(u32 __iomem *_ptr, u32 val, size_t count)
+{
+	count >>= 2;
+	while (count--)
+		writel(val, _ptr++);
+}
+#endif
+
 #ifdef CONFIG_HAS_EARLYSUSPEND
 static void msmfb_early_suspend(struct early_suspend *h)
 {
 	struct msm_fb_data_type *mfd = container_of(h, struct msm_fb_data_type,
 						    early_suspend);
-
+#if defined(CONFIG_FB_MSM_MDP303)
+	/*
+	* For MDP with overlay, set framebuffer with black pixels
+	* to show black screen on HDMI.
+	*/
+	struct fb_info *fbi = mfd->fbi;
+	switch (mfd->fbi->var.bits_per_pixel) {
+	case 32:
+		memset32_io((void *)fbi->screen_base, 0xFF000000,
+							fbi->fix.smem_len);
+		break;
+	default:
+		memset32_io((void *)fbi->screen_base, 0x00, fbi->fix.smem_len);
+		break;
+	}
+#endif
 	msm_fb_suspend_sub(mfd);
 }
 
@@ -594,24 +637,31 @@ static void msmfb_early_resume(struct early_suspend *h)
 }
 #endif
 
-void msm_fb_set_backlight(struct msm_fb_data_type *mfd, __u32 bkl_lvl, u32 save)
+static int unset_bl_level, bl_updated;
+static int bl_level_old;
+
+void msm_fb_set_backlight(struct msm_fb_data_type *mfd, __u32 bkl_lvl)
 {
 	struct msm_fb_panel_data *pdata;
+
+	if (!mfd->panel_power_on || !bl_updated) {
+		unset_bl_level = bkl_lvl;
+		return;
+	} else {
+		unset_bl_level = 0;
+	}
 
 	pdata = (struct msm_fb_panel_data *)mfd->pdev->dev.platform_data;
 
 	if ((pdata) && (pdata->set_backlight)) {
 		down(&mfd->sem);
-		if ((bkl_lvl != mfd->bl_level) || (!save)) {
-			u32 old_lvl;
-
-			old_lvl = mfd->bl_level;
-			mfd->bl_level = bkl_lvl;
-			pdata->set_backlight(mfd);
-
-			if (!save)
-				mfd->bl_level = old_lvl;
+		if (bl_level_old == bkl_lvl) {
+			up(&mfd->sem);
+			return;
 		}
+		mfd->bl_level = bkl_lvl;
+		pdata->set_backlight(mfd);
+		bl_level_old = mfd->bl_level;
 		up(&mfd->sem);
 	}
 }
