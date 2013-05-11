@@ -1,4 +1,5 @@
-/* Copyright (c) 2010-2011, The Linux Foundation. All rights reserved.
+/* Copyright (c) 2010-2011, Code Aurora Forum. All rights reserved.
+ *  KTG modified for Xperia 2011
  *
  * This program is free software; you can redistribute it and/or modify
  * it under the terms of the GNU General Public License version 2 and
@@ -45,7 +46,7 @@ static int pdev_list_cnt;
 static struct clk *tv_src_clk;
 static struct clk *hdmi_clk;
 static struct clk *mdp_tv_clk;
-
+static unsigned long tv_src_clk_default_rate;
 
 static int mdp4_dtv_runtime_suspend(struct device *dev)
 {
@@ -85,11 +86,9 @@ static struct clk *ebi1_clk;
 
 static int dtv_off(struct platform_device *pdev)
 {
-	int ret = 0;
+	int ret = 0, r = 0;
 
 	ret = panel_next_off(pdev);
-
-	pr_info("%s\n", __func__);
 
 	clk_disable(hdmi_clk);
 	if (mdp_tv_clk)
@@ -100,6 +99,7 @@ static int dtv_off(struct platform_device *pdev)
 
 	if (dtv_pdata && dtv_pdata->lcdc_gpio_config)
 		ret = dtv_pdata->lcdc_gpio_config(0);
+	r = clk_set_rate(tv_src_clk, tv_src_clk_default_rate);
 #ifdef CONFIG_MSM_BUS_SCALING
 	if (dtv_bus_scale_handle > 0)
 		msm_bus_scale_client_update_request(dtv_bus_scale_handle,
@@ -108,7 +108,10 @@ static int dtv_off(struct platform_device *pdev)
 	if (ebi1_clk)
 		clk_disable(ebi1_clk);
 #endif
+	pr_info("%s: tv_src_clk=%ldkHz, pm_qos_rate=%dkHz, [%d]\n", __func__,
+		tv_src_clk_default_rate/1000, -1, r);
 	mdp4_extn_disp = 0;
+	mdp_footswitch_ctrl(FALSE);
 	return ret;
 }
 
@@ -121,11 +124,7 @@ static int dtv_on(struct platform_device *pdev)
 	mfd = platform_get_drvdata(pdev);
 	panel_pixclock_freq = mfd->fbi->var.pixclock;
 
-	if (panel_pixclock_freq > 58000000)
-		/* pm_qos_rate should be in Khz */
-		pm_qos_rate = panel_pixclock_freq / 1000 ;
-	else
-		pm_qos_rate = 58000;
+	pm_qos_rate = 192000;
 	mdp4_extn_disp = 1;
 #ifdef CONFIG_MSM_BUS_SCALING
 	if (dtv_bus_scale_handle > 0)
@@ -137,12 +136,6 @@ static int dtv_on(struct platform_device *pdev)
 		clk_enable(ebi1_clk);
 	}
 #endif
-
-	if (dtv_pdata && dtv_pdata->lcdc_power_save)
-		dtv_pdata->lcdc_power_save(1);
-	if (dtv_pdata && dtv_pdata->lcdc_gpio_config)
-		ret = dtv_pdata->lcdc_gpio_config(1);
-
 	mfd = platform_get_drvdata(pdev);
 
 	ret = clk_set_rate(tv_src_clk, mfd->fbi->var.pixclock);
@@ -163,6 +156,11 @@ static int dtv_on(struct platform_device *pdev)
 
 	if (mdp_tv_clk)
 		clk_enable(mdp_tv_clk);
+
+	if (dtv_pdata && dtv_pdata->lcdc_power_save)
+		dtv_pdata->lcdc_power_save(1);
+	if (dtv_pdata && dtv_pdata->lcdc_gpio_config)
+		ret = dtv_pdata->lcdc_gpio_config(1);
 
 	ret = panel_next_on(pdev);
 	return ret;
@@ -310,6 +308,7 @@ static int __init dtv_driver_init(void)
 		pr_err("error: can't get tv_src_clk!\n");
 		return IS_ERR(tv_src_clk);
 	}
+	tv_src_clk_default_rate = clk_get_rate(tv_src_clk);
 
 	hdmi_clk = clk_get(NULL, "hdmi_clk");
 	if (IS_ERR(hdmi_clk)) {

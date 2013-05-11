@@ -1,18 +1,18 @@
-/* Copyright (c) 2008-2010, Code Aurora Forum. All rights reserved.
+/*
+ * MSM MDDI Transport
  *
- * This program is free software; you can redistribute it and/or modify
- * it under the terms of the GNU General Public License version 2 and
- * only version 2 as published by the Free Software Foundation.
+ * Copyright (C) 2007 Google Incorporated
+ * Copyright (c) 2007-2011, Code Aurora Forum. All rights reserved.
+ *  KTG modified for Xperia 2011
+ *
+ * This software is licensed under the terms of the GNU General Public
+ * License version 2, as published by the Free Software Foundation, and
+ * may be copied, distributed, and modified under those terms.
  *
  * This program is distributed in the hope that it will be useful,
  * but WITHOUT ANY WARRANTY; without even the implied warranty of
  * MERCHANTABILITY or FITNESS FOR A PARTICULAR PURPOSE.  See the
  * GNU General Public License for more details.
- *
- * You should have received a copy of the GNU General Public License
- * along with this program; if not, write to the Free Software
- * Foundation, Inc., 51 Franklin Street, Fifth Floor, Boston, MA
- * 02110-1301, USA.
  *
  */
 
@@ -34,7 +34,6 @@
 #include <linux/clk.h>
 #include <linux/platform_device.h>
 #include <linux/pm_runtime.h>
-
 #include "msm_fb.h"
 #include "mddihosti.h"
 #include "mddihost.h"
@@ -212,7 +211,12 @@ static int mddi_off(struct platform_device *pdev)
 
 	if (mddi_pdata && mddi_pdata->mddi_power_save)
 		mddi_pdata->mddi_power_save(0);
-
+#ifdef CONFIG_MSM_BUS_SCALING
+	mdp_bus_scale_update_request(0);
+#else
+	if (mfd->ebi1_clk)
+		clk_disable(mfd->ebi1_clk);
+#endif
 	pm_runtime_put(&pdev->dev);
 	return ret;
 }
@@ -271,6 +275,12 @@ static int mddi_on(struct platform_device *pdev)
 		printk(KERN_ERR "%s: clk_set_rate failed\n",
 			__func__);
 
+#ifdef CONFIG_MSM_BUS_SCALING
+	mdp_bus_scale_update_request(2);
+#else
+	if (mfd->ebi1_clk)
+		clk_enable(mfd->ebi1_clk);
+#endif
 	ret = panel_next_on(pdev);
 
 	return ret;
@@ -387,6 +397,12 @@ static int mddi_probe(struct platform_device *pdev)
 
 	rc = 0;
 	pm_runtime_enable(&pdev->dev);
+#ifndef CONFIG_MSM_BUS_SCALING
+	mfd->ebi1_clk = clk_get(NULL, "ebi1_mddi_clk");
+	if (IS_ERR(mfd->ebi1_clk))
+		return PTR_ERR(mfd->ebi1_clk);
+	clk_set_rate(mfd->ebi1_clk, 65000000);
+#endif
 	/*
 	 * register in mdp driver
 	 */
@@ -434,8 +450,6 @@ void mddi_disable(int lock)
 
 	mddi_pad_ctrl = mddi_host_reg_in(PAD_CTL);
 	mddi_host_reg_out(PAD_CTL, 0x0);
-	if (clk_set_rate(mddi_clk, 0) < 0)
-		printk(KERN_ERR "%s: clk_set_min_rate failed\n", __func__);
 
 	pmdh_clk_disable();
 
@@ -461,9 +475,6 @@ static int mddi_suspend(struct platform_device *pdev, pm_message_t state)
 
 	mddi_pad_ctrl = mddi_host_reg_in(PAD_CTL);
 	mddi_host_reg_out(PAD_CTL, 0x0);
-
-	if (clk_set_rate(mddi_clk, 0) < 0)
-		printk(KERN_ERR "%s: clk_set_min_rate failed\n", __func__);
 
 	pmdh_clk_disable();
 

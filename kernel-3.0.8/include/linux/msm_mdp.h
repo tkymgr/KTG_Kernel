@@ -1,7 +1,6 @@
 /* include/linux/msm_mdp.h
  *
  * Copyright (C) 2007 Google Incorporated
- * Copyright (c) 2009-2011, Code Aurora Forum. All rights reserved.
  *
  * This software is licensed under the terms of the GNU General Public
  * License version 2, as published by the Free Software Foundation, and
@@ -41,8 +40,6 @@
 #define MSMFB_OVERLAY_GET      _IOR(MSMFB_IOCTL_MAGIC, 140, \
 						struct mdp_overlay)
 #define MSMFB_OVERLAY_PLAY_ENABLE     _IOW(MSMFB_IOCTL_MAGIC, 141, unsigned int)
-#define MSMFB_DTV_LCDC_ENABLE     _IOW(MSMFB_IOCTL_MAGIC, 142, unsigned int)
-#define MSMFB_OVERLAY_REFRESH     _IOW(MSMFB_IOCTL_MAGIC, 143, unsigned int)
 #define MSMFB_OVERLAY_BLT       _IOWR(MSMFB_IOCTL_MAGIC, 142, \
 						struct msmfb_overlay_blt)
 #define MSMFB_OVERLAY_BLT_OFFSET     _IOW(MSMFB_IOCTL_MAGIC, 143, unsigned int)
@@ -230,6 +227,7 @@ struct msmfb_data {
 	int id;
 	uint32_t flags;
 	uint32_t priv;
+	uint32_t iova;
 };
 
 #define MSMFB_NEW_REQUEST -1
@@ -237,6 +235,9 @@ struct msmfb_data {
 struct msmfb_overlay_data {
 	uint32_t id;
 	struct msmfb_data data;
+	uint32_t version_key;
+	struct msmfb_data plane1_data;
+	struct msmfb_data plane2_data;
 };
 
 struct msmfb_img {
@@ -437,6 +438,10 @@ struct msmfb_mixer_info_req {
 	struct mdp_mixer_info info[MAX_PIPE_PER_MIXER];
 };
 
+enum {
+	DISPLAY_SUBSYSTEM_ID,
+	ROTATOR_SUBSYSTEM_ID,
+};
 
 #ifdef __KERNEL__
 

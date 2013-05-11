@@ -1,4 +1,5 @@
 /* Copyright (c) 2008-2012, Code Aurora Forum. All rights reserved.
+ *  KTG modified for Xperia 2011
  *
  * This program is free software; you can redistribute it and/or modify
  * it under the terms of the GNU General Public License version 2 and
@@ -174,7 +175,7 @@ struct msm_fb_data_type {
 	struct ion_client *iclient;
 	struct mdp_buf_type *ov0_wb_buf;
 	struct mdp_buf_type *ov1_wb_buf;
-	u32 ov_start, ov_end;
+	u32 ov_start;
 	u32 mem_hid;
 	u32 mdp_rev;
 	u32 use_ov0_blt, ov0_blt_state;
@@ -186,7 +187,7 @@ void msm_fb_debugfs_file_create(struct dentry *root, const char *name,
 				u32 *var);
 void msm_fb_set_backlight(struct msm_fb_data_type *mfd, __u32 bkl_lvl);
 
-void msm_fb_add_device(struct platform_device *pdev);
+struct platform_device *msm_fb_add_device(struct platform_device *pdev);
 struct fb_info *msm_fb_get_writeback_fb(void);
 int msm_fb_writeback_init(struct fb_info *info);
 int msm_fb_writeback_start(struct fb_info *info);

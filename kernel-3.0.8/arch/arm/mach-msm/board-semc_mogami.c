@@ -176,9 +176,14 @@
 #define GPIO_MSM_MDDI_XRES		(157)
 #endif
 
+#ifdef CONFIG_FB_MSM_OVERLAY0_WRITEBACK
+/* width x height x 3 bpp x 2 frame buffer */
+#define MSM_FB_OVERLAY0_WRITEBACK_SIZE	0x500000
+#else
 #define MSM_FB_OVERLAY0_WRITEBACK_SIZE  0
+#endif
 
-#define MSM_PMEM_SF_SIZE	0x1700000
+#define MSM_PMEM_SF_SIZE	0x1600000
 #ifdef CONFIG_FB_MSM_TRIPLE_BUFFER
 #define MSM_FB_PRIM_BUF_SIZE            0x780000
 #else
@@ -191,9 +196,11 @@
 #endif /* CONFIG_FB_MSM_HDMI_SII9024A_PANEL */
 #define MSM_FB_SIZE		MSM_FB_PRIM_BUF_SIZE + MSM_HDMI_SIZE
 
-#define MSM_FLUID_PMEM_ADSP_SIZE	0x2800000
-#define MSM_PMEM_ADSP_SIZE      0x1E00000
+#define MSM_GPU_PHYS_SIZE       SZ_4M
+#define MSM_PMEM_CAMERA_SIZE    0x2F00000
+#define MSM_PMEM_ADSP_SIZE      0x1300000
 #define PMEM_KERNEL_EBI0_SIZE   0x600000
+#define MSM_PMEM_AUDIO_SIZE     0x200000
 
 #define PMIC_GPIO_INT		27
 #define PMIC_VREG_WLAN_LEVEL	2900
@@ -5863,14 +5870,6 @@ static int __init pmem_adsp_size_setup(char *p)
 }
 early_param("pmem_adsp_size", pmem_adsp_size_setup);
 
-static unsigned fluid_pmem_adsp_size = MSM_FLUID_PMEM_ADSP_SIZE;
-static int __init fluid_pmem_adsp_size_setup(char *p)
-{
-	fluid_pmem_adsp_size = memparse(p, NULL);
-	return 0;
-}
-early_param("fluid_pmem_adsp_size", fluid_pmem_adsp_size_setup);
-
 static unsigned pmem_kernel_ebi0_size = PMEM_KERNEL_EBI0_SIZE;
 static int __init pmem_kernel_ebi0_size_setup(char *p)
 {
@@ -5893,13 +5892,7 @@ static struct memtype_reserve msm7x30_reserve_table[] __initdata = {
 static void __init size_pmem_devices(void)
 {
 #ifdef CONFIG_ANDROID_PMEM
-	unsigned long size;
-
-	if machine_is_msm7x30_fluid()
-		size = fluid_pmem_adsp_size;
-	else
-		size = pmem_adsp_size;
-	android_pmem_adsp_pdata.size = size;
+	android_pmem_adsp_pdata.size = pmem_adsp_size;
 	android_pmem_pdata.size = pmem_sf_size;
 #endif
 }

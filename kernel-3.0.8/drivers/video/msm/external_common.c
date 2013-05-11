@@ -1,4 +1,4 @@
-/* Copyright (c) 2010-2012, The Linux Foundation. All rights reserved.
+/* Copyright (c) 2010, Code Aurora Forum. All rights reserved.
  *
  * This program is free software; you can redistribute it and/or modify
  * it under the terms of the GNU General Public License version 2 and
@@ -22,8 +22,6 @@
 #include "hdmi_msm.h"
 #include "external_common.h"
 #include "mhl_api.h"
-
-#include "mdp.h"
 
 struct external_common_state_type *external_common_state;
 EXPORT_SYMBOL(external_common_state);
@@ -75,23 +73,6 @@ const char edid_blk1[0x100] = {
 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00,
 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0xDF};
 #endif /* DEBUG_EDID */
-
-#define DMA_E_BASE 0xB0000
-void mdp_vid_quant_set(void)
-{
-	if ((external_common_state->video_resolution == \
-		HDMI_VFRMT_720x480p60_4_3) || \
-		(external_common_state->video_resolution == \
-		HDMI_VFRMT_720x480p60_16_9)) {
-		MDP_OUTP(MDP_BASE + DMA_E_BASE + 0x70, 0x00EB0010);
-		MDP_OUTP(MDP_BASE + DMA_E_BASE + 0x74, 0x00EB0010);
-		MDP_OUTP(MDP_BASE + DMA_E_BASE + 0x78, 0x00EB0010);
-	} else {
-		MDP_OUTP(MDP_BASE + DMA_E_BASE + 0x70, 0x00FF0000);
-		MDP_OUTP(MDP_BASE + DMA_E_BASE + 0x74, 0x00FF0000);
-		MDP_OUTP(MDP_BASE + DMA_E_BASE + 0x78, 0x00FF0000);
-	}
-}
 
 const char *video_format_2string(uint32 format)
 {
@@ -366,12 +347,11 @@ static ssize_t hdmi_common_wta_hpd(struct device *dev,
 	struct device_attribute *attr, const char *buf, size_t count)
 {
 	ssize_t ret = strnlen(buf, PAGE_SIZE);
-	int hpd;
-	if (hdmi_prim_display)
-		hpd = 1;
-	else
-		hpd = atoi(buf);
-
+#ifdef CONFIG_FB_MSM_HDMI_AS_PRIMARY
+	int hpd = 1;
+#else
+	int hpd = atoi(buf);
+#endif
 	if (external_common_state->hpd_feature) {
 		if (hpd == 0 && external_common_state->hpd_feature_on) {
 			external_common_state->hpd_feature(0);
@@ -419,14 +399,6 @@ static ssize_t hdmi_msm_wta_cec(struct device *dev,
 		mutex_lock(&hdmi_msm_state_mutex);
 		hdmi_msm_state->cec_enabled = true;
 		hdmi_msm_state->cec_logical_addr = 4;
-
-		/* flush CEC queue */
-		hdmi_msm_state->cec_queue_wr = hdmi_msm_state->cec_queue_start;
-		hdmi_msm_state->cec_queue_rd = hdmi_msm_state->cec_queue_start;
-		hdmi_msm_state->cec_queue_full = false;
-		memset(hdmi_msm_state->cec_queue_rd, 0,
-			sizeof(struct hdmi_msm_cec_msg)*CEC_QUEUE_SIZE);
-
 		mutex_unlock(&hdmi_msm_state_mutex);
 		hdmi_msm_cec_init();
 		hdmi_msm_cec_write_logical_addr(
@@ -508,19 +480,16 @@ static ssize_t hdmi_msm_rda_cec_frame(struct device *dev,
 static ssize_t hdmi_msm_wta_cec_frame(struct device *dev,
 	struct device_attribute *attr, const char *buf, size_t count)
 {
-	int i;
 	int retry = ((struct hdmi_msm_cec_msg *) buf)->retransmit;
 
-	for (i = 0; i < RETRANSMIT_MAX_NUM; i++) {
+	if (retry > 15)
+		retry = 15;
+	while (1) {
 		hdmi_msm_cec_msg_send((struct hdmi_msm_cec_msg *) buf);
 		if (hdmi_msm_state->cec_frame_wr_status
-		    & CEC_STATUS_WR_ERROR && retry--) {
-			mutex_lock(&hdmi_msm_state_mutex);
-			if (hdmi_msm_state->fsm_reset_done)
-				retry++;
-			mutex_unlock(&hdmi_msm_state_mutex);
-			msleep(20);
-		} else
+		    & CEC_STATUS_WR_ERROR && retry--)
+			msleep(360);
+		else
 			break;
 	}
 
@@ -680,14 +649,6 @@ static ssize_t external_common_rda_hdmi_mode(struct device *dev,
 	return ret;
 }
 
-static ssize_t hdmi_common_rda_hdmi_primary(struct device *dev,
-	struct device_attribute *attr, char *buf)
-{
-	ssize_t ret = snprintf(buf, PAGE_SIZE, "%d\n",
-		hdmi_prim_display);
-	DEV_DBG("%s: '%d'\n", __func__,	hdmi_prim_display);
-	return ret;
-}
 
 static DEVICE_ATTR(video_mode, S_IRUGO | S_IWUGO,
 	external_common_rda_video_mode, external_common_wta_video_mode);
@@ -707,7 +668,6 @@ static DEVICE_ATTR(hdcp_present, S_IRUGO, hdmi_common_rda_hdcp_present, NULL);
 static DEVICE_ATTR(format_3d, S_IRUGO | S_IWUGO, hdmi_3d_rda_format_3d,
 	hdmi_3d_wta_format_3d);
 #endif
-static DEVICE_ATTR(hdmi_primary, S_IRUGO, hdmi_common_rda_hdmi_primary, NULL);
 
 static struct attribute *external_common_fs_attrs[] = {
 	&dev_attr_video_mode.attr,
@@ -730,7 +690,6 @@ static struct attribute *external_common_fs_attrs[] = {
 	&dev_attr_cec_rd_frame.attr,
 	&dev_attr_cec_wr_frame.attr,
 #endif /* CONFIG_FB_MSM_HDMI_MSM_PANEL_CEC_SUPPORT */
-	&dev_attr_hdmi_primary.attr,
 	NULL,
 };
 static struct attribute_group external_common_fs_attr_group = {
@@ -952,13 +911,8 @@ static const uint8 *hdmi_edid_find_block(const uint8 *in_buf, uint8 type,
 	uint32 offset = 4;
 
 	*len = 0;
-
-	/*edid buffer 1, byte 2 being 4 means no non-DTD/Data block collection
-	  present.
-	  edid buffer 1, byte 2 being 0 menas no non-DTD/DATA block collection
-	  present and no DTD data present.*/
-	if ((in_buf[2] == 0) || (in_buf[2] == 4)) {
-		DEV_WARN("EDID: no DTD or non-DTD data present\n");
+	if ((in_buf[2] == 4) && (type != 2)) { /* no non-DTD data present */
+		DEV_WARN("EDID: no non-DTD data present\n");
 		return NULL;
 	}
 	while (offset < 0x80) {
@@ -1046,15 +1000,14 @@ static void hdmi_edid_extract_speaker_allocation_data(const uint8 *in_buf)
 		return;
 
 	external_common_state->speaker_allocation_block = sad[1];
-	DEV_DBG("EDID: speaker allocation data SP byte = %08x %s%s%s%s%s%s%s\n",
-		sad[1],
+	DEV_DBG("EDID: speaker allocation data=%s%s%s%s%s%s%s\n",
 		(sad[1] & BIT(0)) ? "FL/FR," : "",
 		(sad[1] & BIT(1)) ? "LFE," : "",
 		(sad[1] & BIT(2)) ? "FC," : "",
 		(sad[1] & BIT(3)) ? "RL/RR," : "",
 		(sad[1] & BIT(4)) ? "RC," : "",
 		(sad[1] & BIT(5)) ? "FLC/FRC," : "",
-		(sad[1] & BIT(6)) ? "RLC/RRC," : "");
+		(sad[1] & BIT(6)) ? "LFE," : "");
 }
 
 static void hdmi_edid_extract_audio_data_blocks(const uint8 *in_buf)
@@ -1593,7 +1546,6 @@ void hdmi_common_init_panel_info(struct msm_panel_info *pinfo)
 	pinfo->xres = timing->active_h;
 	pinfo->yres = timing->active_v;
 	pinfo->clk_rate = timing->pixel_freq*1000;
-	pinfo->frame_rate = 60;
 
 	pinfo->lcdc.h_back_porch = timing->back_porch_h;
 	pinfo->lcdc.h_front_porch = timing->front_porch_h;
@@ -1606,10 +1558,11 @@ void hdmi_common_init_panel_info(struct msm_panel_info *pinfo)
 	pinfo->pdest = DISPLAY_2;
 	pinfo->wait_cycle = 0;
 	pinfo->bpp = 24;
-	if (hdmi_prim_display)
-		pinfo->fb_num = 2;
-	else
-		pinfo->fb_num = 1;
+#ifdef CONFIG_FB_MSM_HDMI_AS_PRIMARY
+	pinfo->fb_num = 2;
+#else
+	pinfo->fb_num = 1;
+#endif
 
 	/* blk */
 	pinfo->lcdc.border_clr = 0;

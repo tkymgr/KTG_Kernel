@@ -1,4 +1,5 @@
-/* Copyright (c) 2008-2009, The Linux Foundation. All rights reserved.
+/* Copyright (c) 2008-2009, Code Aurora Forum. All rights reserved.
+ *  KTG modified for Xperia 2011
  *
  * This program is free software; you can redistribute it and/or modify
  * it under the terms of the GNU General Public License version 2 and
@@ -167,24 +168,6 @@ void mddi_queue_image
      int16 src_starting_column,
      int16 num_of_rows,
      int16 num_of_columns, int16 dst_starting_row, int16 dst_starting_column);
-
-void mddi_host_register_write_xl(
-	uint32 reg_addr,
-	uint32 *reg_val_ext,
-	uint32 reg_nbrs,
-	boolean wait,
-	mddi_llist_done_cb_type done_cb,
-	mddi_host_type host);
-void mddi_host_register_write16(
-	uint32 reg_addr,
-	uint32 reg_val0,
-	uint32 reg_val1,
-	uint32 reg_val2,
-	uint32 reg_val3,
-	uint32 reg_nbrs,
-	boolean wait,
-	mddi_llist_done_cb_type done_cb,
-	mddi_host_type host);
 
 int mddi_host_register_read
     (uint32 reg_addr,

@@ -3,6 +3,7 @@
  * Show Logo in RLE 565 format
  *
  * Copyright (C) 2008 Google Incorporated
+ *  KTG modified for Xperia 2011
  *
  * This software is licensed under the terms of the GNU General Public
  * License version 2, as published by the Free Software Foundation, and
@@ -69,7 +70,6 @@ int load_565rle_image(char *filename)
 	}
 	count = sys_lseek(fd, (off_t)0, 2);
 	if (count <= 0) {
-		sys_close(fd);
 		err = -EIO;
 		goto err_logo_close_file;
 	}
@@ -89,7 +89,7 @@ int load_565rle_image(char *filename)
 	ptr = data;
 	bits = (unsigned char *)(info->screen_base);
 	while (count > 3) {
-		unsigned n = ptr[0];
+		unsigned int n = ptr[0];
 		if (n > max)
 			break;
 
